@@ -1,0 +1,24 @@
+name: lms
+
+# One command starts everything:  docker compose up --build   (or ./start.sh)
+#   web      http://localhost:3000
+#   api      http://localhost:8000/docs
+#   storage  http://localhost:9001/rustfs/console/
+include:
+  - path: lms_backend/docker-compose.yml
+    project_directory: lms_backend
+
+services:
+  web:
+    build:
+      context: lms-master
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000/api/v1}
+    image: lms-web
+    container_name: lms-web
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

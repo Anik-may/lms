@@ -1,0 +1,22 @@
+.git
+.gitignore
+.venv
+venv
+env
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.coverage
+.idea
+.vscode
+
+# Secrets and local data must never be baked into the image.
+.env
+.env.*
+media
+
+docs
+docker-compose*.yml
+Dockerfile
+.dockerignore
