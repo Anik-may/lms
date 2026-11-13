@@ -10,6 +10,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://lms:lms@postgres:5432/lms
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-production}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-anikdas@gmail.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:3000}
       STORAGE_PROVIDER: s3
       S3_ENDPOINT_URL: http://storage:9000

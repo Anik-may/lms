@@ -4,7 +4,8 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models.enums import RoleScope
-from app.models.identity import User
+from app.core.security import hash_password, verify_password
+from app.models.identity import AuthIdentity, User
 from app.models.pricing import Currency
 from app.models.rbac import Permission, Role, UserRoleAssignment
 from app.services import auth_service, rbac_service
@@ -114,15 +115,21 @@ async def create_admin(db: AsyncSession, email: str, password: str, display_name
 
 
 async def ensure_first_admin(db: AsyncSession) -> None:
+    """Runs on every startup: makes sure the configured admin account exists, is a
+    super admin, and accepts the configured password."""
     if not settings.admin_email or not settings.admin_password:
         return
-    has_super_admin = await db.scalar(
-        select(UserRoleAssignment.id)
-        .join(Role, Role.id == UserRoleAssignment.role_id)
-        .where(Role.code == SUPER_ADMIN_ROLE_CODE)
-        .limit(1)
-    )
-    if has_super_admin is not None:
-        return
-    display_name = settings.admin_email.split("@")[0]
-    await create_admin(db, settings.admin_email, settings.admin_password, display_name)
+    email = settings.admin_email
+    display_name = email.split("@")[0]
+    if not await create_admin(db, email, settings.admin_password, display_name):
+        identity = await db.scalar(
+            select(AuthIdentity)
+            .join(User, User.id == AuthIdentity.user_id)
+            .where(User.email == email, AuthIdentity.provider == "password")
+        )
+        if identity is not None and not (
+            identity.password_hash
+            and verify_password(settings.admin_password, identity.password_hash)
+        ):
+            identity.password_hash = hash_password(settings.admin_password)
+            await db.commit()

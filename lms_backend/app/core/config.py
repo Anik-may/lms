@@ -24,10 +24,10 @@ class Settings(BaseSettings):
     cors_origin_regex: str = r"^http://(localhost|127\.0\.0\.1):\d+$"
     frontend_base_url: str = "http://localhost:3000"
 
-    # When both are set and no super admin exists yet, startup creates this account
-    # (or promotes it if already registered). Ignored once a super admin exists.
+    # When both are set, every startup makes sure this account exists, is a super admin,
+    # and logs in with admin_password (resetting it if it was changed).
     admin_email: str | None = None
-    admin_password: str | None = Field(default=None, min_length=8, max_length=128)
+    admin_password: str | None = Field(default=None, min_length=1, max_length=128)
 
     # Uploaded lesson files go to an S3-compatible bucket ("s3", the docker-compose
     # storage service by default) or to media_root on local disk ("local"). Either
