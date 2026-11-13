@@ -34,7 +34,7 @@ export default function Login() {
           <input className={input} placeholder="Name" required value={f.display_name} onChange={(e) => setF({ ...f, display_name: e.target.value })} />
         )}
         <input className={input} type="email" placeholder="Email" required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
-        <input className={input} type="password" placeholder="Password (8+ chars)" required minLength={8} value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} />
+        <input className={input} type="password" placeholder={mode === "register" ? "Password (8+ chars)" : "Password"} required minLength={mode === "register" ? 8 : undefined} value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} />
         {err && <p className="text-sm text-red-600">{err}</p>}
         <button className={`${btn} w-full`}>{mode === "login" ? "Sign in" : "Register"}</button>
       </form>
