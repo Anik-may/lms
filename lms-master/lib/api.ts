@@ -90,3 +90,10 @@ export type Analytics = {
 export type Student = { user_id: string; display_name: string; status: string; enrolled_at: string; completion_percentage: number };
 export type Instructor = { user_id: string; display_name: string; role: string };
 export type Profile = { professional_title: string | null; biography: string | null; expertise_summary: string | null; status: string; verification_status: string };
+export type Account = {
+  id: string; email: string; display_name: string; status: string; roles: string[];
+  first_name: string | null; last_name: string | null; bio: string | null; headline: string | null;
+  country_code: string | null; timezone: string | null; website_url: string | null; language: string | null;
+  facebook_url: string | null; instagram_url: string | null; linkedin_url: string | null;
+  tiktok_url: string | null; twitter_url: string | null; youtube_url: string | null;
+};

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { Profile, send } from "@/lib/api";
 import VerificationCard from "@/components/teach/VerificationCard";
+import AccountCard from "@/components/teach/AccountCard";
 import { useApi } from "@/lib/useApi";
 import { Card, State, Badge, btn, input } from "@/components/teach/ui";
 
@@ -24,6 +25,7 @@ export default function ProfilePage() {
   }
   return (
     <>
+      <AccountCard />
     <Card title="Instructor profile" action={data && <Badge>{data.verification_status}</Badge>}>
       <State loading={loading} error={error}>
         <form onSubmit={save} className="space-y-3">
