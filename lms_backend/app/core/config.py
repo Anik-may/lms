@@ -24,6 +24,17 @@ class Settings(BaseSettings):
     cors_origin_regex: str = r"^http://(localhost|127\.0\.0\.1):\d+$"
     frontend_base_url: str = "http://localhost:3000"
 
+    # Outgoing email. With no smtp_host, emails are only written to the log.
+    # docker-compose points this at Mailpit (http://localhost:8025) so you can read them locally.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_security: Literal["none", "starttls", "ssl"] = "starttls"
+    email_from: str = "Institute <no-reply@institute.local>"
+
+    invitation_expire_days: int = 7
+
     # When both are set, every startup makes sure this account exists, is a super admin,
     # and logs in with admin_password (resetting it if it was changed).
     admin_email: str | None = None

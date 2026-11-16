@@ -1,45 +1,37 @@
 "use client";
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { clearTokens, getToken } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { Bell, BookOpen, ClipboardCheck, LayoutDashboard, MessageCircleQuestion, Star, UserRound, Wallet } from "lucide-react";
+import DashboardShell, { NavItem, NoAccess, workspaceLinks } from "@/components/DashboardShell";
+import { canTeach, useMe } from "@/lib/auth";
 
-const links = [
-  ["/teach", "Overview"],
-  ["/teach/courses", "Courses"],
-  ["/teach/submissions", "Submissions"],
-  ["/teach/questions", "Q&A"],
-  ["/teach/reviews", "Reviews"],
-  ["/teach/earnings", "Earnings"],
-  ["/teach/notifications", "Notifications"],
-  ["/teach/profile", "Profile"],
+const nav: NavItem[] = [
+  { href: "/teach", label: "Overview", icon: LayoutDashboard },
+  { href: "/teach/courses", label: "Courses", icon: BookOpen },
+  { href: "/teach/submissions", label: "Submissions", icon: ClipboardCheck },
+  { href: "/teach/questions", label: "Q&A", icon: MessageCircleQuestion },
+  { href: "/teach/reviews", label: "Reviews", icon: Star },
+  { href: "/teach/earnings", label: "Earnings", icon: Wallet },
+  { href: "/teach/notifications", label: "Notifications", icon: Bell },
+  { href: "/teach/profile", label: "Profile", icon: UserRound },
 ];
 
 export default function TeachLayout({ children }: { children: React.ReactNode }) {
-  const path = usePathname();
   const router = useRouter();
-  const [ready, setReady] = useState(false);
+  const { me, loading } = useMe();
   useEffect(() => {
-    if (!getToken()) router.replace("/login");
-    else setReady(true); // eslint-disable-line react-hooks/set-state-in-effect
-  }, [router]);
-  if (!ready) return null;
+    if (!loading && !me) router.replace("/login");
+  }, [loading, me, router]);
+  if (loading || !me) return null;
+  if (!canTeach(me))
+    return (
+      <NoAccess title="This isn't a teacher account">
+        Your account ({me.email}) doesn&apos;t have the Teacher role. Ask an admin to give it to you.
+      </NoAccess>
+    );
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6 md:flex-row">
-      <aside className="md:w-48 md:shrink-0">
-        <h1 className="mb-3 text-lg font-bold">Teacher dashboard</h1>
-        <nav className="flex flex-wrap gap-1 md:flex-col">
-          {links.map(([href, label]) => (
-            <Link key={href} href={href} className={`rounded-lg px-3 py-2 text-sm ${path === href ? "bg-secondary text-white" : "text-gray-700 hover:bg-gray-100"}`}>
-              {label}
-            </Link>
-          ))}
-          <button className="rounded-lg px-3 py-2 text-left text-sm text-gray-500 hover:bg-gray-100" onClick={() => { clearTokens(); router.push("/login"); }}>
-            Sign out
-          </button>
-        </nav>
-      </aside>
-      <main className="min-w-0 flex-1 space-y-6">{children}</main>
-    </div>
+    <DashboardShell me={me} workspace="Teacher" nav={nav} root="/teach" links={workspaceLinks(me, "/teach")}>
+      {children}
+    </DashboardShell>
   );
 }

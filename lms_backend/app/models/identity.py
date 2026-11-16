@@ -165,3 +165,32 @@ class SecurityEvent(UUIDPKMixin, Base):
     created_at: Mapped[datetime] = mapped_column(server_default=text("now()"), nullable=False)
 
     __table_args__ = (Index("ix_security_events_user_created", "user_id", "created_at"),)
+
+
+class UserInvitation(UUIDPKMixin, Base):
+    """An admin's invite to join with a given role. The account is created on accept,
+    with the password the admin chose (only its hash is kept here)."""
+
+    __tablename__ = "user_invitations"
+
+    email: Mapped[str] = mapped_column(CITEXT, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(120))
+    role_code: Mapped[str] = mapped_column(String(50), nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    # PENDING -> ACCEPTED | REVOKED. Expiry is read from expires_at, not stored as a status.
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="PENDING")
+
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+    expires_at: Mapped[datetime] = mapped_column(nullable=False)
+    accepted_at: Mapped[datetime | None]
+    revoked_at: Mapped[datetime | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=text("now()"), nullable=False)
+
+    __table_args__ = (Index("ix_user_invitations_email_status", "email", "status"),)

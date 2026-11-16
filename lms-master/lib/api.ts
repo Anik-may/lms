@@ -8,13 +8,18 @@ export class ApiError extends Error {
 
 const isBrowser = () => typeof window !== "undefined";
 export const getToken = () => (isBrowser() ? localStorage.getItem("access_token") : null);
+// Fired on sign-in/out so components showing who is signed in (e.g. the navbar) refresh.
+export const AUTH_EVENT = "auth-change";
+const notify = () => window.dispatchEvent(new Event(AUTH_EVENT));
 export const setTokens = (a: string, r: string) => {
   localStorage.setItem("access_token", a);
   localStorage.setItem("refresh_token", r);
+  notify();
 };
 export const clearTokens = () => {
   localStorage.removeItem("access_token");
   localStorage.removeItem("refresh_token");
+  notify();
 };
 
 async function refresh(): Promise<boolean> {
@@ -27,7 +32,9 @@ async function refresh(): Promise<boolean> {
   });
   if (!res.ok) return false;
   const t = await res.json();
-  setTokens(t.access_token, t.refresh_token);
+  // Same user, new tokens: store quietly rather than announcing a sign-in.
+  localStorage.setItem("access_token", t.access_token);
+  localStorage.setItem("refresh_token", t.refresh_token);
   return true;
 }
 
@@ -58,6 +65,8 @@ export const send = <T,>(method: string, p: string, json?: unknown) => api<T>(p,
 export type Course = {
   id: string; title: string; slug: string; status: string; subtitle: string | null;
   enrollment_count: number; rating_average: number; rating_count: number; level: string;
+  description?: string | null; price?: number | null; list_price?: number | null; currency_code?: string | null;
+  instructor_name?: string | null; thumbnail_url?: string | null; published_at?: string | null; created_at?: string;
 };
 export type Overview = {
   course_count: number; published_course_count: number; student_count: number;
@@ -97,3 +106,56 @@ export type Account = {
   facebook_url: string | null; instagram_url: string | null; linkedin_url: string | null;
   tiktok_url: string | null; twitter_url: string | null; youtube_url: string | null;
 };
+
+// --- Learner (my account) ---
+export type Learning = {
+  course: Course; enrollment_status: string; enrolled_at: string; completion_percentage: number;
+  completed_content_count: number; total_required_content_count: number;
+  last_accessed_at: string | null; completed_at: string | null;
+};
+export type Certificate = {
+  id: string; certificate_number: string; verification_code: string; course_id: string;
+  course_title: string; holder_name: string; issued_at: string; revoked: boolean;
+};
+export type MyOrder = {
+  id: string; order_number: string; currency_code: string; subtotal: number; discount_total: number;
+  tax_total: number; grand_total: number; status: string; created_at: string; items: { id: string; course_id: string }[];
+};
+
+// --- Invitations ---
+export type InvitationStatus = "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED";
+export type Invitation = {
+  id: string; email: string; display_name: string | null; role_code: string; status: InvitationStatus;
+  invited_by_name: string | null; created_at: string; expires_at: string; accepted_at: string | null;
+};
+export type InvitationSent = { invitation: Invitation; invite_url: string; email_sent: boolean };
+export type InvitationPublic = {
+  email: string; display_name: string | null; role_name: string; invited_by_name: string | null;
+  status: InvitationStatus; expires_at: string;
+};
+
+// --- Admin dashboard ---
+export type AdminUser = { id: string; email: string; display_name: string; status: string; created_at: string; roles: string[] };
+export type Role = { code: string; name: string; description: string | null; permissions: string[] };
+export type AdminStats = {
+  users_total: number; users_suspended: number; users_by_role: Record<string, number>;
+  courses_by_status: Record<string, number>; enrollments_total: number; orders_paid: number;
+  revenue: number; currency_code: string; open_review_reports: number; pending_verifications: number;
+};
+export type AdminCourse = {
+  id: string; title: string; slug: string; status: string; owner_name: string; owner_email: string;
+  enrollment_count: number; created_at: string; published_at: string | null;
+};
+export type AdminOrder = {
+  id: string; order_number: string; user_name: string; user_email: string; grand_total: number;
+  currency_code: string; status: string; item_count: number; created_at: string;
+};
+export type ReviewReport = {
+  id: string; review_id: string; review_body: string | null; review_rating: number; review_status: string;
+  reported_by_name: string; reason: string; status: string; created_at: string;
+};
+export type Verification = {
+  id: string; user_id: string; instructor_name: string | null; verification_type: string; status: string;
+  details: string | null; submitted_at: string; reviewed_at: string | null;
+};
+export type Category = { id: string; parent_id: string | null; name: string; slug: string; description: string | null; display_order: number };

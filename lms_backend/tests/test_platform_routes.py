@@ -60,6 +60,9 @@ async def test_platform_routes(c):  # noqa: F811
     # enroll (free), certificate gating
     assert (await c.post(f"{T}/courses/{cid}/enroll", headers=student["h"])).status_code == 201
     assert (await c.get(f"{T}/courses?sort=popular&q=rust")).json()[0]["enrollment_count"] == 1
+    learning = (await c.get(f"{T}/learning/me", headers=student["h"])).json()
+    assert [r["course"]["id"] for r in learning] == [cid]
+    assert learning[0]["completion_percentage"] == 0.0
     assert (await c.post(f"{T}/courses/{cid}/certificate", headers=student["h"])).status_code == 409
     async with AsyncSessionLocal() as db:
         await db.execute(update(CourseProgress).where(CourseProgress.course_id == uuid.UUID(cid)).values(completed_at=datetime.now(timezone.utc)))

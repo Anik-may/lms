@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import secrets
 import uuid
@@ -18,7 +19,7 @@ from app.core.security import (
 )
 from app.models.identity import AuthIdentity, PasswordResetToken, User, UserSession
 from app.schemas.auth import TokenResponse
-from app.services import rbac_service
+from app.services import invitation_service, rbac_service
 
 
 def _hash_token(token: str) -> str:
@@ -29,6 +30,11 @@ async def register_user(db: AsyncSession, email: str, password: str, display_nam
     existing = await db.scalar(select(User).where(User.email == email))
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+    if await invitation_service.pending_for_email(db, email):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This email has been invited. Open the invitation email and click Accept.",
+        )
 
     user = User(email=email, display_name=display_name)
     db.add(user)
@@ -59,6 +65,11 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> User
         )
     )
     if identity is None or identity.password_hash is None:
+        if identity is None and await invitation_service.pending_for_email(db, email):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You've been invited but haven't accepted yet. Open the invitation email and click Accept first.",
+            )
         raise invalid_credentials
     if not verify_password(password, identity.password_hash):
         raise invalid_credentials
@@ -164,7 +175,7 @@ async def request_password_reset(db: AsyncSession, email: str) -> None:
     db.add(reset_token)
     await db.commit()
 
-    send_password_reset_email(user.email, raw_token)
+    await asyncio.to_thread(send_password_reset_email, user.email, raw_token)
 
 
 async def reset_password(db: AsyncSession, token: str, new_password: str) -> None:

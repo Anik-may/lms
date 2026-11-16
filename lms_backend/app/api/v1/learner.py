@@ -13,6 +13,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.certificates import CertificateIssuance, CertificateTemplate
 from app.models.courses import Course
+from app.models.enrollment import Enrollment
 from app.models.enums import CourseStatus
 from app.models.identity import User
 from app.models.notifications import Notification
@@ -136,6 +137,57 @@ async def add_to_wishlist(
     if await db.get(WishlistItem, {"user_id": current_user.id, "course_id": course_id}) is None:
         db.add(WishlistItem(user_id=current_user.id, course_id=course_id))
         await db.commit()
+
+
+# --- My learning ------------------------------------------------------------
+
+
+class LearningOut(BaseModel):
+    """One enrolled course with the learner's progress in it."""
+
+    course: CourseOut
+    enrollment_status: str
+    enrolled_at: datetime
+    completion_percentage: float
+    completed_content_count: int
+    total_required_content_count: int
+    last_accessed_at: datetime | None
+    completed_at: datetime | None
+
+
+@router.get("/learning/me", response_model=list[LearningOut])
+async def my_learning(
+    current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    """Enrolled courses with progress, most recently touched first."""
+    rows = (
+        await db.execute(
+            select(Enrollment, Course, CourseProgress)
+            .join(Course, Course.id == Enrollment.course_id)
+            .outerjoin(
+                CourseProgress,
+                (CourseProgress.course_id == Enrollment.course_id)
+                & (CourseProgress.user_id == Enrollment.user_id),
+            )
+            .where(Enrollment.user_id == current_user.id, Course.deleted_at.is_(None))
+        )
+    ).all()
+    courses = {c.id: c for c in await course_service.with_catalog_fields(db, [c for _, c, _ in rows])}
+    out = [
+        LearningOut(
+            course=courses[course.id],
+            enrollment_status=enrollment.status.value,
+            enrolled_at=enrollment.enrolled_at,
+            completion_percentage=float(p.completion_percentage) if p else 0.0,
+            completed_content_count=p.completed_content_count if p else 0,
+            total_required_content_count=p.total_required_content_count if p else 0,
+            last_accessed_at=p.last_accessed_at if p else None,
+            completed_at=enrollment.completed_at or (p.completed_at if p else None),
+        )
+        for enrollment, course, p in rows
+    ]
+    out.sort(key=lambda r: r.last_accessed_at or r.enrolled_at, reverse=True)
+    return out
 
 
 @router.delete("/wishlist/{course_id}", status_code=status.HTTP_204_NO_CONTENT)
