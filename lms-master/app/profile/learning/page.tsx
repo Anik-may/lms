@@ -37,6 +37,7 @@ export default function MyLearning() {
             <CourseCard
               key={r.course.id}
               course={r.course}
+              href={`/learn/${r.course.id}`}
               footer={
                 <div className="w-full space-y-3">
                   <Progress value={r.completion_percentage} />
@@ -44,7 +45,7 @@ export default function MyLearning() {
                     <span className="text-xs text-slate-500">
                       {isDone(r) ? `Completed ${date(r.completed_at)}` : `Enrolled ${date(r.enrolled_at)}`}
                     </span>
-                    <Link href={`/courses?q=${encodeURIComponent(r.course.title)}`} className={button(isDone(r) ? "secondary" : "primary", "sm")}>
+                    <Link href={`/learn/${r.course.id}`} className={button(isDone(r) ? "secondary" : "primary", "sm")}>
                       {isDone(r) ? "Review" : r.completion_percentage > 0 ? "Resume" : "Start"} <ArrowRight className="size-3.5" />
                     </Link>
                   </div>

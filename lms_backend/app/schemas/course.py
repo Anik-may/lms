@@ -106,12 +106,25 @@ class CourseInstructorOut(BaseModel):
 class CourseStudentOut(BaseModel):
     user_id: uuid.UUID
     display_name: str
+    email: str | None = None
     status: EnrollmentStatus
     source: EnrollmentSource
     enrolled_at: datetime
     completion_percentage: float
     completed_at: datetime | None
     last_accessed_at: datetime | None
+
+
+class CourseStudentAdd(BaseModel):
+    """Enroll an existing account by email (a complimentary seat, no payment)."""
+
+    email: EmailStr
+
+
+class CourseStudentStatusUpdate(BaseModel):
+    """SUSPENDED revokes access to the course; ACTIVE restores it."""
+
+    status: Literal["ACTIVE", "SUSPENDED"]
 
 
 class ReorderRequest(BaseModel):

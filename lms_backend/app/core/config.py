@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     media_max_upload_mb: int = 1024
     media_url_expire_minutes: int = 360
 
+    # No real payment processor is connected yet. "mock" payments mark an order paid
+    # without charging anyone, so they must stay off anywhere real money is involved.
+    allow_mock_payments: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

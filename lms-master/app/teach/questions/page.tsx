@@ -16,7 +16,12 @@ export default function Questions() {
 
   const load = async (id: string) => {
     setErr("");
-    setOpen(await get<ThreadDetail>(`/teaching/questions/${id}`));
+    setReply("");
+    try {
+      setOpen(await get<ThreadDetail>(`/teaching/questions/${id}`));
+    } catch (e) {
+      setErr((e as Error).message);
+    }
   };
   async function act(fn: () => Promise<ThreadDetail>) {
     setErr("");
@@ -35,6 +40,7 @@ export default function Questions() {
         description="Questions students asked in your courses."
         actions={<Tabs<Filter> value={filter} options={["unanswered", "all"]} labels={{ unanswered: "Unanswered", all: "All questions" }} onChange={setFilter} />}
       />
+      {err && !open && <Alert tone="error">{err}</Alert>}
       <div className="grid gap-6 lg:grid-cols-[380px_1fr]">
         <Card flush>
           <State loading={list.loading} error={list.error} empty={list.data?.length === 0} emptyIcon={MessageCircleQuestion} emptyTitle={filter === "unanswered" ? "No unanswered questions" : "No questions yet"}>

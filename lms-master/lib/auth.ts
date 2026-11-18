@@ -8,13 +8,18 @@ export type Me = {
   display_name: string;
   roles: string[];
   permissions: string[];
+  /** Co-instructor/TA on at least one course. */
+  co_teaches?: boolean;
 };
 
 export const can = (me: Me | null, permission: string) => !!me?.permissions.includes(permission);
 
-// The teacher dashboard is for the Teacher role. Admins hold every permission, but
-// that alone doesn't make them a teacher; they can give themselves the role if needed.
-export const canTeach = (me: Me | null) => !!me?.roles.includes("TEACHER");
+// The teacher dashboard is for the Teacher role, and for co-instructors on the courses
+// they were added to. Admins hold every permission, but that alone doesn't make them a
+// teacher; they can give themselves the role if needed.
+export const canTeach = (me: Me | null) => !!me && (me.roles.includes("TEACHER") || !!me.co_teaches);
+/** Only the Teacher role can create new courses; co-instructors work on existing ones. */
+export const canCreateCourse = (me: Me | null) => !!me?.roles.includes("TEACHER");
 
 // Staff are accounts with any admin permission (admins, support agents, moderators).
 export const ADMIN_PERMISSIONS = ["user.read", "role.assign", "user.suspend", "order.read", "review.moderate", "course.publish"];

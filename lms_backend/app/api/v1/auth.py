@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.models.courses import Course, CourseInstructor
 from app.models.identity import User
 from app.schemas.auth import (
     ChangePasswordRequest,
@@ -25,6 +27,14 @@ async def _to_user_out(db: AsyncSession, user: User) -> UserOut:
     out = UserOut.model_validate(user)
     out.roles = await rbac_service.get_role_codes(db, user.id)
     out.permissions = await rbac_service.get_permission_codes(db, user.id)
+    out.co_teaches = (
+        await db.scalar(
+            select(CourseInstructor.course_id)
+            .join(Course, Course.id == CourseInstructor.course_id)
+            .where(CourseInstructor.user_id == user.id, Course.deleted_at.is_(None))
+            .limit(1)
+        )
+    ) is not None
     return out
 
 

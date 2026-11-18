@@ -5,6 +5,8 @@ import { useState } from "react";
 import { BookOpen, ChevronRight, Loader2, Plus, Star } from "lucide-react";
 import { Course, send } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
+import { canCreateCourse } from "@/lib/auth";
+import { useShellMe } from "@/components/DashboardShell";
 import { Alert, btn, Card, Field, input, label, PageHeader, State, StatusBadge, Table, td } from "@/components/ui";
 
 const slugify = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -12,6 +14,7 @@ const slugify = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").repla
 export default function Courses() {
   const { data, loading, error } = useApi<Course[]>("/teaching/courses");
   const router = useRouter();
+  const me = useShellMe();
   const [f, setF] = useState({ title: "", slug: "", language_code: "en" });
   const [slugEdited, setSlugEdited] = useState(false);
   const [err, setErr] = useState("");
@@ -34,6 +37,7 @@ export default function Courses() {
     <>
       <PageHeader title="Courses" description="Create courses and manage the ones you teach." />
 
+      {canCreateCourse(me) && (
       <Card title="Create a course" description="You can change everything except the URL later.">
         <form onSubmit={create} className="grid gap-4 md:grid-cols-[2fr_1.5fr_120px_auto] md:items-end">
           <Field label="Title">
@@ -49,9 +53,10 @@ export default function Courses() {
         </form>
         {err && <Alert tone="error" className="mt-4">{err}</Alert>}
       </Card>
+      )}
 
       <Card title="Your courses" description={data ? `${data.length} course${data.length === 1 ? "" : "s"}` : undefined} flush>
-        <State loading={loading} error={error} empty={data?.length === 0} emptyIcon={BookOpen} emptyTitle="No courses yet" emptyText="Create your first course above.">
+        <State loading={loading} error={error} empty={data?.length === 0} emptyIcon={BookOpen} emptyTitle="No courses yet" emptyText={canCreateCourse(me) ? "Create your first course above." : "Courses you co-teach appear here."}>
           <Table head={["Course", "Level", "Status", "Students", "Rating", ""]}>
             {data?.map((c) => (
               <tr key={c.id} className="group cursor-pointer hover:bg-slate-50/70" onClick={() => router.push(`/teach/courses/${c.id}`)}>

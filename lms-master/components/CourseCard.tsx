@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element -- thumbnails are short-lived signed URLs from storage */
 import Link from "next/link";
 import { BookOpen, Star, Users } from "lucide-react";
-import { Course } from "@/lib/api";
+import { Course, mediaUrl } from "@/lib/api";
 import { Badge, label, money } from "@/components/ui";
 
 const COVERS = [
@@ -14,7 +14,7 @@ const COVERS = [
 
 function Cover({ course }: { course: Course }) {
   if (course.thumbnail_url)
-    return <img src={course.thumbnail_url} alt="" className="aspect-[16/9] w-full object-cover" loading="lazy" />;
+    return <img src={mediaUrl(course.thumbnail_url)} alt="" className="aspect-[16/9] w-full object-cover" loading="lazy" />;
   const tone = COVERS[[...course.title].reduce((n, c) => n + c.charCodeAt(0), 0) % COVERS.length];
   return (
     <div className={`relative grid aspect-[16/9] w-full place-items-center overflow-hidden bg-gradient-to-br ${tone}`}>

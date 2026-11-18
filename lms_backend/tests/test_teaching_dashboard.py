@@ -129,3 +129,187 @@ async def test_full_teacher_dashboard(c):
     # remove co-instructor
     r = await c.delete(f"{T}/courses/{cid}/instructors/{co['id']}", headers=teacher["h"])
     assert r.status_code == 200 and len(r.json()) == 1
+
+
+async def test_teacher_manages_students(c):
+    T = "/api/v1"
+    teacher = await _user(c, "roster-teacher", teacher=True)
+    student = await _user(c, "roster-student")
+    outsider = await _user(c, "roster-outsider")
+    r = await c.post(f"{T}/courses", headers=teacher["h"], json={
+        "title": "Roster", "language_code": "en", "slug": f"roster-{RUN}"})
+    cid = r.json()["id"]
+
+    # add by email (case-insensitive); unknown, duplicate, staff and outsiders refused
+    r = await c.post(f"{T}/courses/{cid}/students", headers=teacher["h"], json={"email": student["email"].upper()})
+    assert r.status_code == 201, r.text
+    assert r.json()["email"] == student["email"] and r.json()["source"] == "ADMIN"
+    assert (await c.post(f"{T}/courses/{cid}/students", headers=teacher["h"], json={"email": student["email"]})).status_code == 409
+    assert (await c.post(f"{T}/courses/{cid}/students", headers=teacher["h"], json={"email": "nobody@x.io"})).status_code == 404
+    assert (await c.post(f"{T}/courses/{cid}/students", headers=teacher["h"], json={"email": teacher["email"]})).status_code == 409
+    assert (await c.post(f"{T}/courses/{cid}/students", headers=outsider["h"], json={"email": outsider["email"]})).status_code == 403
+    r = await c.get(f"{T}/courses/{cid}/students", headers=teacher["h"])
+    assert [s["email"] for s in r.json()] == [student["email"]]
+
+    # suspend -> restore
+    sid = student["id"]
+    r = await c.patch(f"{T}/courses/{cid}/students/{sid}", headers=teacher["h"], json={"status": "SUSPENDED"})
+    assert r.status_code == 200 and r.json()["status"] == "SUSPENDED"
+    assert (await c.patch(f"{T}/courses/{cid}/students/{sid}", headers=teacher["h"], json={"status": "SUSPENDED"})).status_code == 409
+    assert (await c.patch(f"{T}/courses/{cid}/students/{sid}", headers=outsider["h"], json={"status": "ACTIVE"})).status_code == 403
+    r = await c.patch(f"{T}/courses/{cid}/students/{sid}", headers=teacher["h"], json={"status": "ACTIVE"})
+    assert r.status_code == 200 and r.json()["status"] == "ACTIVE"
+    assert (await c.patch(f"{T}/courses/{cid}/students/{uuid.uuid4()}", headers=teacher["h"], json={"status": "ACTIVE"})).status_code == 404
+
+
+async def test_teacher_notifications_and_co_teacher_access(c):
+    T = "/api/v1"
+    teacher = await _user(c, "notif-teacher", teacher=True)
+    co = await _user(c, "notif-co")
+    student = await _user(c, "notif-student")
+    cid = (await c.post(f"{T}/courses", headers=teacher["h"], json={
+        "title": "Notif", "language_code": "en", "slug": f"notif-{RUN}"})).json()["id"]
+    await c.patch(f"{T}/courses/{cid}/status", headers=teacher["h"], json={"status": "PUBLISHED"})
+
+    # co-instructor: flagged on /auth/me and notified
+    assert (await c.get(f"{T}/auth/me", headers=co["h"])).json()["co_teaches"] is False
+    assert (await c.post(f"{T}/courses/{cid}/instructors", headers=teacher["h"], json={"email": co["email"]})).status_code == 201
+    assert (await c.get(f"{T}/auth/me", headers=co["h"])).json()["co_teaches"] is True
+    types = lambda u: c.get(f"{T}/notifications", headers=u["h"])
+    assert "ADDED_AS_INSTRUCTOR" in [n["type"] for n in (await types(co)).json()["items"]]
+
+    # student activity notifies owner and co-instructor, never the student
+    await c.post(f"{T}/courses/{cid}/students", headers=teacher["h"], json={"email": student["email"]})
+    assert (await c.post(f"{T}/courses/{cid}/discussions", headers=student["h"], json={"title": "Q?", "body": "?"})).status_code == 201
+    assert (await c.put(f"{T}/courses/{cid}/reviews/me", headers=student["h"], json={"rating": 4})).status_code == 200
+    assert (await c.put(f"{T}/courses/{cid}/reviews/me", headers=student["h"], json={"rating": 5})).status_code == 200
+    for u in (teacher, co):
+        got = [n["type"] for n in (await types(u)).json()["items"]]
+        assert got.count("QUESTION_ASKED") == 1 and got.count("REVIEW_POSTED") == 1, got
+    got = [n["type"] for n in (await types(student)).json()["items"]]
+    assert "QUESTION_ASKED" not in got and "REVIEW_POSTED" not in got
+
+
+async def test_review_replies_and_learner_progress(c):
+    T = "/api/v1"
+    teacher = await _user(c, "reply-teacher", teacher=True)
+    student = await _user(c, "reply-student")
+    outsider = await _user(c, "reply-outsider", teacher=True)
+    cid = (await c.post(f"{T}/courses", headers=teacher["h"], json={
+        "title": "Replies", "language_code": "en", "slug": f"replies-{RUN}"})).json()["id"]
+    sec = (await c.post(f"{T}/courses/{cid}/sections", headers=teacher["h"], json={"title": "S"})).json()["id"]
+    les = (await c.post(f"{T}/courses/{cid}/sections/{sec}/contents", headers=teacher["h"], json={"title": "L", "content_type": "ARTICLE"})).json()["id"]
+    await c.put(f"{T}/courses/{cid}/contents/{les}/article", headers=teacher["h"], json={"body": "hi"})
+    await c.patch(f"{T}/courses/{cid}/sections/{sec}/contents/{les}/status", headers=teacher["h"], json={"status": "PUBLISHED"})
+    await c.patch(f"{T}/courses/{cid}/status", headers=teacher["h"], json={"status": "PUBLISHED"})
+    await c.post(f"{T}/courses/{cid}/students", headers=teacher["h"], json={"email": student["email"]})
+
+    # my review: none, then written
+    assert (await c.get(f"{T}/courses/{cid}/reviews/me", headers=student["h"])).json() is None
+    await c.put(f"{T}/courses/{cid}/reviews/me", headers=student["h"], json={"rating": 4, "body": "Nice"})
+    rid = (await c.get(f"{T}/courses/{cid}/reviews/me", headers=student["h"])).json()["id"]
+
+    # reply: only course staff; shown publicly and to the student, who is notified
+    assert (await c.put(f"{T}/teaching/reviews/{rid}/reply", headers=outsider["h"], json={"body": "x"})).status_code == 404
+    assert (await c.put(f"{T}/teaching/reviews/{rid}/reply", headers=teacher["h"], json={"body": "Thanks!"})).status_code == 204
+    assert (await c.put(f"{T}/teaching/reviews/{rid}/reply", headers=teacher["h"], json={"body": "Thanks a lot!"})).status_code == 204
+    pub = (await c.get(f"{T}/courses/{cid}/reviews")).json()
+    assert pub[0]["instructor_reply"] == "Thanks a lot!"
+    assert (await c.get(f"{T}/teaching/reviews", headers=teacher["h"])).json()["reviews"][0]["instructor_reply"] == "Thanks a lot!"
+    notes = [n["type"] for n in (await c.get(f"{T}/notifications", headers=student["h"])).json()["items"]]
+    assert notes.count("REVIEW_REPLIED") == 1
+    assert (await c.delete(f"{T}/teaching/reviews/{rid}/reply", headers=teacher["h"])).status_code == 204
+    assert (await c.get(f"{T}/courses/{cid}/reviews")).json()[0]["instructor_reply"] is None
+
+    # per-lesson progress
+    assert (await c.get(f"{T}/courses/{cid}/progress/contents", headers=student["h"])).json() == []
+    r = await c.put(f"{T}/contents/{les}/progress", headers=student["h"], json={"status": "COMPLETED", "completion_percentage": 100})
+    assert r.status_code == 200, r.text
+    rows = (await c.get(f"{T}/courses/{cid}/progress/contents", headers=student["h"])).json()
+    assert [(x["content_id"], x["status"]) for x in rows] == [(les, "COMPLETED")]
+    assert (await c.get(f"{T}/courses/{cid}/progress", headers=student["h"])).json()["completion_percentage"] == 100
+
+    # grading notifies the student
+    asg = (await c.post(f"{T}/courses/{cid}/sections/{sec}/contents", headers=teacher["h"], json={"title": "A", "content_type": "ASSIGNMENT"})).json()["id"]
+    await c.put(f"{T}/courses/{cid}/contents/{asg}/assignment", headers=teacher["h"], json={"instructions": "Do it"})
+    await c.patch(f"{T}/courses/{cid}/sections/{sec}/contents/{asg}/status", headers=teacher["h"], json={"status": "PUBLISHED"})
+    sub = await c.post(f"{T}/courses/{cid}/contents/{asg}/assignment/submissions", headers=student["h"], json={"text_submission": "done"})
+    assert sub.status_code == 201, sub.text
+    r = await c.put(f"{T}/courses/{cid}/submissions/{sub.json()['id']}/grade", headers=teacher["h"], json={"score": 90, "feedback": "Good"})
+    assert r.status_code == 200, r.text
+    items = (await c.get(f"{T}/notifications", headers=student["h"])).json()["items"]
+    graded = [n for n in items if n["type"] == "SUBMISSION_GRADED"]
+    assert len(graded) == 1 and graded[0]["data"]["course_id"] == cid and "90/100" in graded[0]["body"]
+
+
+async def test_payments_cannot_be_faked(c, monkeypatch):
+    from app.core.config import settings
+
+    T = "/api/v1"
+    teacher = await _user(c, "pay-teacher", teacher=True)
+    buyer = await _user(c, "pay-buyer")
+    cid = (await c.post(f"{T}/courses", headers=teacher["h"], json={
+        "title": "Paid", "language_code": "en", "slug": f"paid-{RUN}"})).json()["id"]
+    await c.put(f"{T}/courses/{cid}/price", headers=teacher["h"], json={"amount": "20"})
+    await c.patch(f"{T}/courses/{cid}/status", headers=teacher["h"], json={"status": "PUBLISHED"})
+    await c.post(f"{T}/cart/items", headers=buyer["h"], json={"course_id": cid})
+    oid = (await c.post(f"{T}/checkout", headers=buyer["h"], json={"idempotency_key": f"pay-{RUN}"})).json()["id"]
+    pay = lambda provider: c.post(f"{T}/orders/{oid}/pay", headers=buyer["h"], json={"provider": provider, "provider_payment_id": f"x-{RUN}"})
+
+    assert (await pay("stripe")).status_code == 400          # unverifiable provider
+    assert (await pay("free")).status_code == 400            # not a free order
+    monkeypatch.setattr(settings, "allow_mock_payments", False)
+    assert (await c.get(f"{T}/payments/config")).json() == {"providers": ["fake_stripe"], "test_mode": True}
+    assert (await pay("fake_stripe")).status_code == 400     # cards are charged by the server, not claimed
+    assert (await pay("mock")).status_code == 403            # test payments switched off
+    assert (await c.get(f"{T}/orders/{oid}", headers=buyer["h"])).json()["status"] == "PENDING"
+    monkeypatch.setattr(settings, "allow_mock_payments", True)
+    assert (await c.get(f"{T}/payments/config")).json()["test_mode"] is True
+    r = await pay("mock")
+    assert r.status_code == 200, r.text
+    assert (await c.get(f"{T}/orders/{oid}", headers=buyer["h"])).json()["status"] == "PAID"
+    # a payment id can't be replayed, and the course can't be bought twice
+    assert (await pay("mock")).status_code == 409
+    assert (await c.post(f"{T}/cart/items", headers=buyer["h"], json={"course_id": cid})).status_code == 409
+
+
+async def test_fake_stripe_card_payments(c):
+    T = "/api/v1"
+    teacher = await _user(c, "card-teacher", teacher=True)
+    buyer = await _user(c, "card-buyer")
+    cid = (await c.post(f"{T}/courses", headers=teacher["h"], json={
+        "title": "Card", "language_code": "en", "slug": f"card-{RUN}"})).json()["id"]
+    await c.put(f"{T}/courses/{cid}/price", headers=teacher["h"], json={"amount": "30"})
+    await c.patch(f"{T}/courses/{cid}/status", headers=teacher["h"], json={"status": "PUBLISHED"})
+    await c.post(f"{T}/cart/items", headers=buyer["h"], json={"course_id": cid})
+    oid = (await c.post(f"{T}/checkout", headers=buyer["h"], json={"idempotency_key": f"card-{RUN}"})).json()["id"]
+
+    def card(number, exp="12/40", cvc="123"):
+        m, y = exp.split("/")
+        return c.post(f"{T}/orders/{oid}/pay/card", headers=buyer["h"],
+                      json={"number": number, "exp_month": int(m), "exp_year": int(y), "cvc": cvc})
+
+    for number, kw, code in [
+        ("4242 4242 4242 4241", {}, "incorrect_number"),          # fails the Luhn check
+        ("4242 4242 4242 4242", {"exp": "01/20"}, "invalid_expiry"),
+        ("4242 4242 4242 4242", {"cvc": "12"}, "invalid_cvc"),
+        ("4000 0000 0000 0002", {}, "card_declined"),
+        ("4000 0000 0000 9995", {}, "insufficient_funds"),
+        ("4111 1111 1111 1111", {}, "live_card_in_test_mode"),    # valid, but not a test card
+    ]:
+        r = await card(number, **kw)
+        assert r.status_code == 402, (number, r.text)
+        assert r.headers["x-decline-code"] == code
+    order = (await c.get(f"{T}/orders/{oid}", headers=buyer["h"])).json()
+    assert order["status"] == "PENDING"
+    assert len(order["payments"]) == 6 and {p["status"] for p in order["payments"]} == {"FAILED"}
+
+    r = await card("4242424242424242")
+    assert r.status_code == 200, r.text
+    p = r.json()
+    assert p["status"] == "CAPTURED" and p["card_brand"] == "visa" and p["card_last4"] == "4242"
+    assert p["provider_payment_id"].startswith("ch_fake_")
+    order = (await c.get(f"{T}/orders/{oid}", headers=buyer["h"])).json()
+    assert order["status"] == "PAID"
+    assert (await c.get(f"{T}/courses/{cid}/progress/contents", headers=buyer["h"])).status_code == 200
+    assert (await card("4242424242424242")).status_code == 409  # already paid

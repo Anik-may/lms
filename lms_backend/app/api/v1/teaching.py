@@ -15,7 +15,9 @@ from app.schemas.course import (
     CourseOut,
     CoursePriceOut,
     CoursePriceUpdate,
+    CourseStudentAdd,
     CourseStudentOut,
+    CourseStudentStatusUpdate,
 )
 from app.schemas.teaching import (
     CourseAnalyticsOut,
@@ -27,6 +29,7 @@ from app.schemas.teaching import (
     QuestionOut,
     QuestionUpdate,
     ReplyCreate,
+    ReviewReplyIn,
     ReviewsOut,
     TeachingOverviewOut,
     ThreadDetailOut,
@@ -119,6 +122,26 @@ async def list_reviews(
     return await teaching_service.list_reviews(
         db, current_user.id, course_id, rating, limit, offset
     )
+
+
+@router.put("/teaching/reviews/{review_id}/reply", status_code=status.HTTP_204_NO_CONTENT)
+async def reply_to_review(
+    review_id: uuid.UUID,
+    payload: ReviewReplyIn,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Post or edit the public instructor reply shown under a review."""
+    await teaching_service.reply_to_review(db, current_user.id, review_id, payload.body)
+
+
+@router.delete("/teaching/reviews/{review_id}/reply", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_review_reply(
+    review_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await teaching_service.reply_to_review(db, current_user.id, review_id, None)
 
 
 @router.get("/teaching/questions", response_model=list[QuestionOut])
@@ -223,12 +246,37 @@ async def get_course_analytics(
 
 @router.get("/courses/{course_id}/students", response_model=list[CourseStudentOut])
 async def list_course_students(
-    limit: int = Query(default=50, le=100),
+    limit: int = Query(default=200, le=500),
     offset: int = Query(default=0, ge=0),
     course: Course = Depends(require_course_management("enrollment.read")),
     db: AsyncSession = Depends(get_db),
 ):
     return await teaching_service.list_students(db, course.id, limit, offset)
+
+
+@router.post(
+    "/courses/{course_id}/students",
+    response_model=CourseStudentOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_course_student(
+    payload: CourseStudentAdd,
+    course: Course = Depends(require_course_management("course.update")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Enroll an existing account for free, e.g. a scholarship or a class roster."""
+    return await teaching_service.add_student(db, course, payload.email)
+
+
+@router.patch("/courses/{course_id}/students/{user_id}", response_model=CourseStudentOut)
+async def update_course_student(
+    user_id: uuid.UUID,
+    payload: CourseStudentStatusUpdate,
+    course: Course = Depends(require_course_management("enrollment.suspend")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Suspend a student's access to the course, or restore it."""
+    return await teaching_service.set_student_status(db, course, user_id, payload.status)
 
 
 @router.get("/courses/{course_id}/instructors", response_model=list[CourseInstructorOut])

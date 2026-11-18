@@ -34,3 +34,15 @@ class CourseProgressOut(BaseModel):
     completion_percentage: float
     last_accessed_at: datetime | None
     completed_at: datetime | None
+
+
+class ContentProgressOut(BaseModel):
+    """Per-lesson progress for the course player's checkmarks and video resume."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    content_id: uuid.UUID
+    status: str
+    completion_percentage: float
+    last_position_seconds: int
+    completed_at: datetime | None

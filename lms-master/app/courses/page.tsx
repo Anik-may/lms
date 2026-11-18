@@ -3,7 +3,8 @@ import { Suspense, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { BookOpen, Heart, Search, SlidersHorizontal, X } from "lucide-react";
 import CourseCard from "@/components/CourseCard";
-import { Category, Course, getToken, send } from "@/lib/api";
+import Link from "next/link";
+import { Category, Course, Learning, getToken, send } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { button, EmptyState, Flash, inputBase, Msg, Skeleton } from "@/components/ui";
 
@@ -46,6 +47,9 @@ function Catalog() {
   if (level) api.set("level", level);
   const cats = useApi<Category[]>("/categories");
   const courses = useApi<Course[]>(`/courses?${api}`);
+  // Signed-in learners see "Continue" on courses they're already in.
+  const mine = useApi<Learning[]>(getToken() ? "/learning/me" : null);
+  const enrolledIds = new Set(mine.data?.map((r) => r.course.id));
   const catName = cats.data?.find((c) => c.id === category)?.name;
   const filtered = !!(q || category || level);
 
@@ -164,11 +168,22 @@ function Catalog() {
                 <CourseCard
                   key={c.id}
                   course={c}
+                  href={enrolledIds.has(c.id) ? `/learn/${c.id}` : `/courses/${c.id}`}
                   footer={
                     <>
-                      <button className={`${button("primary", "sm")} flex-1`} disabled={busy === c.id} onClick={() => act(c.id, () => send("POST", `/courses/${c.id}/enroll`), `You're enrolled in “${c.title}”.`)}>
-                        Enroll
-                      </button>
+                      {enrolledIds.has(c.id) ? (
+                        <Link href={`/learn/${c.id}`} className={`${button("primary", "sm")} flex-1`}>Continue learning</Link>
+                      ) : c.price ? (
+                        <Link href={getToken() ? `/checkout?course=${c.id}` : "/login"} className={`${button("primary", "sm")} flex-1`}>Buy</Link>
+                      ) : (
+                        <button
+                          className={`${button("primary", "sm")} flex-1`}
+                          disabled={busy === c.id}
+                          onClick={() => act(c.id, async () => { await send("POST", `/courses/${c.id}/enroll`); router.push(`/learn/${c.id}`); }, `You're enrolled in “${c.title}”.`)}
+                        >
+                          Enroll for free
+                        </button>
+                      )}
                       <button className={button("secondary", "sm")} disabled={busy === c.id} onClick={() => act(c.id, () => send("PUT", `/wishlist/${c.id}`), `Saved “${c.title}” to your wishlist.`)}>
                         <Heart className="size-3.5" /> Save
                       </button>

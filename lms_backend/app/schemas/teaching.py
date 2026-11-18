@@ -58,6 +58,12 @@ class ReviewOut(BaseModel):
     rating: int
     body: str | None
     created_at: datetime
+    instructor_reply: str | None = None
+    instructor_reply_at: datetime | None = None
+
+
+class ReviewReplyIn(BaseModel):
+    body: str = Field(min_length=1, max_length=5000)
 
 
 class ReviewsOut(BaseModel):

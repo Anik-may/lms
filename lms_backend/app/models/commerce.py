@@ -159,6 +159,8 @@ class Payment(UUIDPKMixin, Base):
     )
 
     failure_code: Mapped[str | None] = mapped_column(String(100))
+    card_brand: Mapped[str | None] = mapped_column(String(20))
+    card_last4: Mapped[str | None] = mapped_column(String(4))
     captured_at: Mapped[datetime | None]
 
     created_at: Mapped[datetime] = mapped_column(server_default=text("now()"), nullable=False)

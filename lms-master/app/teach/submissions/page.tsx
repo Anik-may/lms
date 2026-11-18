@@ -1,9 +1,9 @@
 "use client";
 import { useState } from "react";
-import { ClipboardCheck, ExternalLink } from "lucide-react";
+import { ClipboardCheck, ExternalLink, Pencil } from "lucide-react";
 import { Submission, send } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
-import { Alert, Avatar, Badge, btn, Card, date, Field, input, PageHeader, State, Tabs } from "@/components/ui";
+import { Alert, Avatar, Badge, btn, button, Card, date, Field, input, PageHeader, State, Tabs } from "@/components/ui";
 
 type Status = "SUBMITTED" | "GRADED";
 
@@ -12,12 +12,14 @@ export default function Submissions() {
   const { data, loading, error, reload } = useApi<Submission[]>(`/teaching/submissions?status=${status}`);
   const [form, setForm] = useState<Record<string, { score: string; feedback: string }>>({});
   const [err, setErr] = useState("");
+  const [regrade, setRegrade] = useState<string | null>(null);
 
-  async function grade(id: string) {
+  async function grade(id: string, courseId: string) {
     const g = form[id];
     setErr("");
     try {
-      await send("PUT", `/submissions/${id}/grade`, { score: Number(g?.score), feedback: g?.feedback || null });
+      await send("PUT", `/courses/${courseId}/submissions/${id}/grade`, { score: Number(g?.score), feedback: g?.feedback || null });
+      setRegrade(null);
       reload();
     } catch (e) {
       setErr((e as Error).message);
@@ -61,20 +63,30 @@ export default function Submissions() {
                   <ExternalLink className="size-4" /> {s.external_url}
                 </a>
               )}
-              {s.grade ? (
+              {s.grade && regrade !== s.id ? (
                 <div className="mt-4 flex items-start gap-3 rounded-lg border border-lime-200 bg-lime-50 p-3 text-sm">
                   <span className="rounded-md bg-white px-2 py-0.5 font-semibold text-lime-800 ring-1 ring-lime-200">{s.grade.score} / 100</span>
-                  {s.grade.feedback && <span className="text-slate-700">{s.grade.feedback}</span>}
+                  <span className="flex-1 text-slate-700">{s.grade.feedback}</span>
+                  <button
+                    type="button"
+                    className={button("secondary", "sm")}
+                    onClick={() => { setForm({ ...form, [s.id]: { score: String(s.grade!.score), feedback: s.grade!.feedback ?? "" } }); setRegrade(s.id); }}
+                  >
+                    <Pencil className="size-3.5" /> Change grade
+                  </button>
                 </div>
               ) : (
-                <form className="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-[120px_1fr_auto] sm:items-end" onSubmit={(e) => { e.preventDefault(); grade(s.id); }}>
+                <form className="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-[120px_1fr_auto] sm:items-end" onSubmit={(e) => { e.preventDefault(); grade(s.id, s.course_id); }}>
                   <Field label="Score">
                     <input className={input} type="number" min={0} max={100} required placeholder="0–100" value={form[s.id]?.score ?? ""} onChange={(e) => set(s.id, { score: e.target.value })} />
                   </Field>
                   <Field label="Feedback (optional)">
                     <input className={input} placeholder="What went well, what to improve" value={form[s.id]?.feedback ?? ""} onChange={(e) => set(s.id, { feedback: e.target.value })} />
                   </Field>
-                  <button className={btn}>Submit grade</button>
+                  <span className="flex gap-2">
+                    <button className={btn}>{s.grade ? "Save grade" : "Submit grade"}</button>
+                    {s.grade && <button type="button" className={button("secondary")} onClick={() => setRegrade(null)}>Cancel</button>}
+                  </span>
                 </form>
               )}
             </Card>

@@ -4,6 +4,7 @@ import { ArrowRight, BookOpen, ClipboardCheck, GraduationCap, MessageCircleQuest
 import { Course, Overview } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useShellMe } from "@/components/DashboardShell";
+import { canCreateCourse } from "@/lib/auth";
 import { btn, btnSecondary, Card, money, PageHeader, Skeleton, Stat, State, StatusBadge, Table, td } from "@/components/ui";
 
 export default function TeachOverview() {
@@ -18,7 +19,7 @@ export default function TeachOverview() {
         eyebrow="Teacher dashboard"
         title={`Welcome back, ${me.display_name.split(" ")[0]}`}
         description="Here's how your courses are doing."
-        actions={<Link href="/teach/courses" className={btn}><Plus className="size-4" /> New course</Link>}
+        actions={canCreateCourse(me) && <Link href="/teach/courses" className={btn}><Plus className="size-4" /> New course</Link>}
       />
 
       {o.loading ? (

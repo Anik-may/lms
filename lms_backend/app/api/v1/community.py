@@ -23,6 +23,7 @@ from app.schemas.teaching import (
     ThreadDetailOut,
 )
 from app.services import review_service, teaching_service
+from app.services.notification_service import notify_course_staff
 from app.services.enrollment_service import get_learning_enrollment
 
 router = APIRouter(tags=["community"])
@@ -52,6 +53,15 @@ async def create_thread(
     db.add(thread)
     await db.flush()
     db.add(DiscussionPost(thread_id=thread.id, author_user_id=current_user.id, body=payload.body))
+    await notify_course_staff(
+        db,
+        course_id,
+        "QUESTION_ASKED",
+        f"New question from {current_user.display_name}",
+        payload.title,
+        {"thread_id": str(thread.id)},
+        exclude=current_user.id,
+    )
     await db.commit()
     return {"thread_id": thread.id}
 
@@ -98,6 +108,14 @@ async def upsert_my_review(
     if review is None:
         review = Review(course_id=course_id, user_id=current_user.id, enrollment_id=enrollment.id)
         db.add(review)
+        await notify_course_staff(
+            db,
+            course_id,
+            "REVIEW_POSTED",
+            f"New {payload.rating}-star review from {current_user.display_name}",
+            payload.body,
+            exclude=current_user.id,
+        )
     review.rating = payload.rating
     review.body = payload.body
     try:
@@ -119,6 +137,38 @@ class PublicReviewOut(BaseModel):
     body: str | None
     helpful_count: int
     created_at: datetime
+    instructor_reply: str | None = None
+    instructor_reply_at: datetime | None = None
+
+
+class MyReviewOut(BaseModel):
+    id: uuid.UUID
+    rating: int
+    body: str | None
+    instructor_reply: str | None
+    created_at: datetime
+
+
+@router.get("/courses/{course_id}/reviews/me", response_model=MyReviewOut | None)
+async def get_my_review(
+    course_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The caller's own review of the course, or null if they haven't written one."""
+    review = await db.scalar(
+        select(Review).where(
+            Review.course_id == course_id,
+            Review.user_id == current_user.id,
+            Review.deleted_at.is_(None),
+        )
+    )
+    if review is None:
+        return None
+    return MyReviewOut(
+        id=review.id, rating=review.rating, body=review.body,
+        instructor_reply=review.instructor_reply, created_at=review.created_at,
+    )
 
 
 @router.get("/courses/{course_id}/reviews", response_model=list[PublicReviewOut])
@@ -155,6 +205,8 @@ async def list_course_reviews(
             body=r.body,
             helpful_count=h,
             created_at=r.created_at,
+            instructor_reply=r.instructor_reply,
+            instructor_reply_at=r.instructor_reply_at,
         )
         for r, name, h in rows
     ]

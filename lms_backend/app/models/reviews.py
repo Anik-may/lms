@@ -25,6 +25,13 @@ class Review(UUIDPKMixin, Base):
 
     status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="PUBLISHED")
 
+    # One public response from the course's teaching staff.
+    instructor_reply: Mapped[str | None] = mapped_column(Text)
+    instructor_reply_at: Mapped[datetime | None]
+    instructor_reply_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_reviews_instructor_reply_by")
+    )
+
     created_at: Mapped[datetime] = mapped_column(server_default=text("now()"), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         server_default=text("now()"), onupdate=text("now()"), nullable=False

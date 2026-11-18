@@ -54,6 +54,7 @@ class OrderOut(BaseModel):
     status: OrderStatus
     created_at: datetime
     items: list[OrderItemOut] = []
+    payments: list["PaymentOut"] = []
 
 
 class CheckoutRequest(BaseModel):
@@ -63,6 +64,15 @@ class CheckoutRequest(BaseModel):
 class PaymentCaptureRequest(BaseModel):
     provider: str = Field(default="mock", max_length=50)
     provider_payment_id: str = Field(min_length=1, max_length=255)
+
+
+class CardPaymentRequest(BaseModel):
+    # Loose limits on purpose: the gateway checks the details and answers like Stripe does.
+    number: str = Field(max_length=40)
+    exp_month: int = Field(ge=0, le=99)
+    exp_year: int = Field(ge=0, le=9999)
+    cvc: str = Field(max_length=10)
+    name: str | None = Field(default=None, max_length=200)
 
 
 class PaymentOut(BaseModel):
@@ -75,3 +85,10 @@ class PaymentOut(BaseModel):
     currency_code: str
     status: PaymentStatus
     captured_at: datetime | None
+    provider_payment_id: str
+    failure_code: str | None = None
+    card_brand: str | None = None
+    card_last4: str | None = None
+
+
+OrderOut.model_rebuild()

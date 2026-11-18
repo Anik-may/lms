@@ -1,13 +1,53 @@
 "use client";
 import { useState } from "react";
-import { Star } from "lucide-react";
-import { Reviews } from "@/lib/api";
+import { MessageSquareReply, Pencil, Send, Star, Trash2 } from "lucide-react";
+import { Review, Reviews, send } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
-import { Avatar, Card, date, PageHeader, Skeleton, Stars, State } from "@/components/ui";
+import { Alert, Avatar, button, Card, date, input, PageHeader, Skeleton, Stars, State } from "@/components/ui";
+
+function ReplyBox({ r, onSaved }: { r: Review; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(r.instructor_reply ?? "");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function run(fn: () => Promise<unknown>) {
+    setErr("");
+    setBusy(true);
+    try { await fn(); setEditing(false); onSaved(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+
+  if (r.instructor_reply && !editing)
+    return (
+      <div className="mt-3 rounded-lg bg-brand-50 p-3 text-sm ring-1 ring-brand-100">
+        <p className="mb-1 flex flex-wrap items-center gap-2 text-xs font-semibold text-brand-800">
+          <MessageSquareReply className="size-3.5" /> Your public reply · {date(r.instructor_reply_at)}
+          <span className="ml-auto flex gap-1">
+            <button className={button("plain", "sm")} onClick={() => { setText(r.instructor_reply ?? ""); setEditing(true); }}><Pencil className="size-3.5" /> Edit</button>
+            <button className={button("plain", "sm")} disabled={busy} onClick={() => run(() => send("DELETE", `/teaching/reviews/${r.id}/reply`))}><Trash2 className="size-3.5" /> Delete</button>
+          </span>
+        </p>
+        <p className="whitespace-pre-wrap text-slate-700">{r.instructor_reply}</p>
+        {err && <Alert tone="error" className="mt-2">{err}</Alert>}
+      </div>
+    );
+  if (!editing) return <button className={`${button("secondary", "sm")} mt-3`} onClick={() => setEditing(true)}><MessageSquareReply className="size-3.5" /> Reply publicly</button>;
+  return (
+    <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); run(() => send("PUT", `/teaching/reviews/${r.id}/reply`, { body: text })); }}>
+      <label className="sr-only" htmlFor={`reply-${r.id}`}>Reply to {r.reviewer_name}</label>
+      <textarea id={`reply-${r.id}`} className={input} rows={3} required maxLength={5000} autoFocus placeholder="Thank them, or answer their concern. Everyone can see this." value={text} onChange={(e) => setText(e.target.value)} />
+      <div className="flex gap-2">
+        <button className={button("primary", "sm")} disabled={busy}><Send className="size-3.5" /> {r.instructor_reply ? "Save reply" : "Post reply"}</button>
+        <button type="button" className={button("secondary", "sm")} onClick={() => setEditing(false)}>Cancel</button>
+      </div>
+      {err && <Alert tone="error">{err}</Alert>}
+    </form>
+  );
+}
 
 export default function ReviewsPage() {
   const [rating, setRating] = useState<number | null>(null);
-  const { data, loading, error } = useApi<Reviews>(`/teaching/reviews${rating ? `?rating=${rating}` : ""}`);
+  const { data, loading, error, reload } = useApi<Reviews>(`/teaching/reviews${rating ? `?rating=${rating}` : ""}`);
   // Keep the summary from the unfiltered load so the bars don't jump when filtering.
   const all = useApi<Reviews>("/teaching/reviews");
   const s = all.data;
@@ -66,6 +106,7 @@ export default function ReviewsPage() {
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500"><Stars n={r.rating} /> {r.course_title}</div>
                     {r.body && <p className="mt-2 text-sm text-slate-700">{r.body}</p>}
+                    <ReplyBox key={`${r.id}-${r.instructor_reply ?? ""}`} r={r} onSaved={reload} />
                   </div>
                 </li>
               ))}

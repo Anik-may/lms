@@ -39,6 +39,9 @@ class UserOut(BaseModel):
     created_at: datetime
     roles: list[str] = []
     permissions: list[str] = []
+    # Co-instructor/TA on at least one course, so they can use the teacher dashboard
+    # for those courses even without the Teacher role.
+    co_teaches: bool = False
 
 
 class MessageResponse(BaseModel):

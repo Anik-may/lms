@@ -33,6 +33,7 @@ from app.schemas.content import (
 from app.schemas.progress import LearningProgressUpdate
 from app.services import progress_service
 from app.services.enrollment_service import get_learning_enrollment
+from app.services.notification_service import notify, notify_course_staff
 
 NOT_ENROLLED = HTTPException(
     status_code=status.HTTP_403_FORBIDDEN, detail="You are not enrolled in this course"
@@ -418,6 +419,15 @@ async def submit_assignment(
         external_url=data.external_url,
     )
     db.add(submission)
+    await notify_course_staff(
+        db,
+        course_id,
+        "SUBMISSION_RECEIVED",
+        f"New submission: {content.title}",
+        f"{user.display_name} handed in attempt {previous + 1}. It's waiting to be graded.",
+        {"content_id": str(content.id)},
+        exclude=user.id,
+    )
     await db.commit()
     return (await list_submissions(db, submission_id=submission.id))[0]
 
@@ -510,6 +520,14 @@ async def grade_submission(
     grade.feedback = data.feedback
     grade.graded_at = datetime.now(timezone.utc)
     submission.status = "GRADED"
+    notify(
+        db,
+        submission.user_id,
+        "SUBMISSION_GRADED",
+        f"Your assignment was graded: {found[0].content_title}",
+        f"Score {data.score:g}/100." + (f" {data.feedback}" if data.feedback else ""),
+        {"course_id": str(course_id), "content_id": str(found[0].content_id)},
+    )
     await db.commit()
 
     return (await list_submissions(db, submission_id=submission_id))[0]

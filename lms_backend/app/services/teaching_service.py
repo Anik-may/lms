@@ -10,7 +10,7 @@ from app.models.assignments import AssignmentSubmission
 from app.models.content import CourseSection, LearningContent
 from app.models.courses import Course, CourseInstructor
 from app.models.enrollment import Enrollment
-from app.models.enums import CourseStatus
+from app.models.enums import CourseStatus, EnrollmentSource, EnrollmentStatus
 from app.models.identity import User
 from app.models.instructor import InstructorProfile
 from app.models.discussions import DiscussionPost, DiscussionThread
@@ -41,6 +41,7 @@ from app.schemas.teaching import (
 )
 from app.services import course_service
 from app.services.commerce_service import DEFAULT_CURRENCY
+from app.services.enrollment_service import create_enrollment
 from app.services.notification_service import notify
 
 OWNER_ROLE = "OWNER"
@@ -235,10 +236,14 @@ async def set_price(db: AsyncSession, course: Course, data: CoursePriceUpdate) -
 
 
 async def list_students(
-    db: AsyncSession, course_id: uuid.UUID, limit: int, offset: int
+    db: AsyncSession,
+    course_id: uuid.UUID,
+    limit: int,
+    offset: int,
+    user_id: uuid.UUID | None = None,
 ) -> list[CourseStudentOut]:
     stmt = (
-        select(Enrollment, User.display_name, CourseProgress)
+        select(Enrollment, User.display_name, User.email, CourseProgress)
         .join(User, User.id == Enrollment.user_id)
         .outerjoin(
             CourseProgress,
@@ -250,10 +255,13 @@ async def list_students(
         .limit(limit)
         .offset(offset)
     )
+    if user_id is not None:
+        stmt = stmt.where(Enrollment.user_id == user_id)
     return [
         CourseStudentOut(
             user_id=enrollment.user_id,
             display_name=display_name,
+            email=email,
             status=enrollment.status,
             source=enrollment.source,
             enrolled_at=enrollment.enrolled_at,
@@ -261,8 +269,73 @@ async def list_students(
             completed_at=progress.completed_at if progress else None,
             last_accessed_at=progress.last_accessed_at if progress else None,
         )
-        for enrollment, display_name, progress in (await db.execute(stmt)).all()
+        for enrollment, display_name, email, progress in (await db.execute(stmt)).all()
     ]
+
+
+async def _student_row(db: AsyncSession, course_id: uuid.UUID, user_id: uuid.UUID) -> CourseStudentOut:
+    rows = await list_students(db, course_id, limit=1, offset=0, user_id=user_id)
+    return rows[0]
+
+
+async def add_student(db: AsyncSession, course: Course, email: str) -> CourseStudentOut:
+    """Gives an existing account a complimentary seat in the course."""
+    user = await db.scalar(
+        select(User).where(func.lower(User.email) == email.lower(), User.deleted_at.is_(None))
+    )
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No account with that email. Ask them to sign up first.",
+        )
+    if user.id == course.owner_user_id or await db.get(
+        CourseInstructor, {"course_id": course.id, "user_id": user.id}
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="That person teaches this course"
+        )
+    await create_enrollment(db, user.id, course.id, EnrollmentSource.ADMIN)
+    notify(
+        db,
+        user.id,
+        "ENROLLED",
+        f"You were added to {course.title}",
+        "Your instructor enrolled you. Start learning any time.",
+        {"course_id": str(course.id)},
+    )
+    await db.commit()
+    return await _student_row(db, course.id, user.id)
+
+
+async def set_student_status(
+    db: AsyncSession, course: Course, user_id: uuid.UUID, new_status: str
+) -> CourseStudentOut:
+    enrollment = await db.scalar(
+        select(Enrollment).where(Enrollment.course_id == course.id, Enrollment.user_id == user_id)
+    )
+    if enrollment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
+    if new_status == EnrollmentStatus.SUSPENDED.value:
+        if enrollment.status not in (EnrollmentStatus.ACTIVE, EnrollmentStatus.COMPLETED):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Can't suspend an enrollment that is {enrollment.status.value.lower()}",
+            )
+        enrollment.status = EnrollmentStatus.SUSPENDED
+    else:
+        if enrollment.status != EnrollmentStatus.SUSPENDED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Only suspended students can be restored"
+            )
+        progress = await db.scalar(
+            select(CourseProgress).where(
+                CourseProgress.course_id == course.id, CourseProgress.user_id == user_id
+            )
+        )
+        done = progress is not None and progress.completed_at is not None
+        enrollment.status = EnrollmentStatus.COMPLETED if done else EnrollmentStatus.ACTIVE
+    await db.commit()
+    return await _student_row(db, course.id, user_id)
 
 
 async def list_instructors(db: AsyncSession, course: Course) -> list[CourseInstructorOut]:
@@ -302,6 +375,14 @@ async def add_instructor(db: AsyncSession, course: Course, data: CourseInstructo
     if instructor is None:
         instructor = CourseInstructor(course_id=course.id, user_id=user.id)
         db.add(instructor)
+        notify(
+            db,
+            user.id,
+            "ADDED_AS_INSTRUCTOR",
+            f"You're now teaching {course.title}",
+            "Open the teacher dashboard to edit the course and help its students.",
+            {"course_id": str(course.id)},
+        )
     instructor.role = data.role
     await db.commit()
 
@@ -370,10 +451,47 @@ async def list_reviews(
                 rating=r.rating,
                 body=r.body,
                 created_at=r.created_at,
+                instructor_reply=r.instructor_reply,
+                instructor_reply_at=r.instructor_reply_at,
             )
             for r, title, name in rows
         ],
     )
+
+
+async def _managed_review(db: AsyncSession, user_id: uuid.UUID, review_id: uuid.UUID) -> Review:
+    review = await db.scalar(
+        select(Review).where(
+            Review.id == review_id,
+            Review.deleted_at.is_(None),
+            Review.course_id.in_(course_service.managed_course_ids(user_id)),
+        )
+    )
+    if review is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    return review
+
+
+async def reply_to_review(
+    db: AsyncSession, user_id: uuid.UUID, review_id: uuid.UUID, body: str | None
+) -> None:
+    """Sets (or with body=None removes) the instructor's public reply to a review."""
+    review = await _managed_review(db, user_id, review_id)
+    is_new = review.instructor_reply is None and body is not None
+    review.instructor_reply = body
+    review.instructor_reply_at = datetime.now(timezone.utc) if body is not None else None
+    review.instructor_reply_by = user_id if body is not None else None
+    if is_new:
+        course = await db.get(Course, review.course_id)
+        notify(
+            db,
+            review.user_id,
+            "REVIEW_REPLIED",
+            "The instructor replied to your review",
+            course.title if course else None,
+            {"course_id": str(review.course_id), "review_id": str(review.id)},
+        )
+    await db.commit()
 
 
 async def get_course_analytics(db: AsyncSession, course: Course) -> CourseAnalyticsOut:
