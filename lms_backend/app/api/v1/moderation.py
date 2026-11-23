@@ -1,20 +1,19 @@
-"""Review moderation and instructor verification (staff side, plus the teacher's submit side)."""
+"""Review moderation (staff side)."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_permission
+from app.core.deps import require_permission
 from app.models.identity import User
-from app.models.instructor import InstructorVerification
 from app.models.reviews import Review, ReviewReport
-from app.services import review_service, teaching_service
+from app.services import review_service
 from app.services.notification_service import notify
 
 router = APIRouter(tags=["moderation"])
@@ -101,124 +100,3 @@ async def resolve_review_report(
         created_at=report.created_at,
     )
 
-
-# --- Instructor verification ------------------------------------------------
-
-
-class VerificationIn(BaseModel):
-    verification_type: Literal["IDENTITY", "PROFESSIONAL", "EDUCATION"]
-    details: str | None = Field(default=None, max_length=5000)
-
-
-class VerificationOut(BaseModel):
-    id: uuid.UUID
-    user_id: uuid.UUID
-    instructor_name: str | None = None
-    verification_type: str
-    status: str
-    details: str | None
-    submitted_at: datetime
-    reviewed_at: datetime | None
-
-
-def _v_out(v: InstructorVerification, name: str | None = None) -> VerificationOut:
-    return VerificationOut(
-        id=v.id,
-        user_id=v.user_id,
-        instructor_name=name,
-        verification_type=v.verification_type,
-        status=v.status,
-        details=(v.verification_metadata or {}).get("details"),
-        submitted_at=v.submitted_at,
-        reviewed_at=v.reviewed_at,
-    )
-
-
-@router.post(
-    "/teaching/verification", response_model=VerificationOut, status_code=status.HTTP_201_CREATED
-)
-async def submit_verification(
-    payload: VerificationIn,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    await teaching_service.get_profile(db, current_user.id)
-    pending = await db.scalar(
-        select(InstructorVerification).where(
-            InstructorVerification.user_id == current_user.id,
-            InstructorVerification.verification_type == payload.verification_type,
-            InstructorVerification.status == "PENDING",
-        )
-    )
-    if pending is not None:
-        raise HTTPException(status_code=409, detail="A request of this type is already pending")
-    v = InstructorVerification(
-        user_id=current_user.id,
-        verification_type=payload.verification_type,
-        verification_metadata={"details": payload.details},
-    )
-    db.add(v)
-    await db.commit()
-    await db.refresh(v)
-    return _v_out(v)
-
-
-@router.get("/teaching/verification", response_model=list[VerificationOut])
-async def my_verifications(
-    current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
-):
-    rows = await db.scalars(
-        select(InstructorVerification)
-        .where(InstructorVerification.user_id == current_user.id)
-        .order_by(InstructorVerification.submitted_at.desc())
-    )
-    return [_v_out(v) for v in rows]
-
-
-@router.get("/admin/verifications", response_model=list[VerificationOut])
-async def list_verifications(
-    v_status: Literal["PENDING", "APPROVED", "REJECTED"] = Query(default="PENDING", alias="status"),
-    _: User = Depends(require_permission("course.publish")),
-    db: AsyncSession = Depends(get_db),
-):
-    rows = (
-        await db.execute(
-            select(InstructorVerification, User.display_name)
-            .join(User, User.id == InstructorVerification.user_id)
-            .where(InstructorVerification.status == v_status)
-            .order_by(InstructorVerification.submitted_at)
-        )
-    ).all()
-    return [_v_out(v, name) for v, name in rows]
-
-
-class VerificationDecision(BaseModel):
-    decision: Literal["APPROVED", "REJECTED"]
-
-
-@router.patch("/admin/verifications/{verification_id}", response_model=VerificationOut)
-async def decide_verification(
-    verification_id: uuid.UUID,
-    payload: VerificationDecision,
-    reviewer: User = Depends(require_permission("course.publish")),
-    db: AsyncSession = Depends(get_db),
-):
-    v = await db.get(InstructorVerification, verification_id)
-    if v is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
-    if v.status != "PENDING":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already decided")
-    now = datetime.now(timezone.utc)
-    v.status, v.reviewed_at, v.reviewed_by = payload.decision, now, reviewer.id
-    profile = await teaching_service.get_profile(db, v.user_id)
-    if payload.decision == "APPROVED":
-        profile.verification_status, profile.verified_at = "VERIFIED", now
-    notify(
-        db,
-        v.user_id,
-        "VERIFICATION_DECIDED",
-        f"Your {v.verification_type.lower()} verification was {payload.decision.lower()}",
-    )
-    await db.commit()
-    await db.refresh(v)
-    return _v_out(v)

@@ -587,10 +587,10 @@ erDiagram
 <section class="domain" id="instructor">
   <div class="domain-head">
     <h2>Instructor</h2>
-    <span class="domain-count">3 tables</span>
+    <span class="domain-count">2 tables</span>
   </div>
   <p class="domain-desc">A capability profile hung off a user, not a separate account type.</p>
-  <div class="chip-row"><span class="chip">instructor_profiles</span> <span class="chip">instructor_social_links</span> <span class="chip">instructor_verifications</span></div>
+  <div class="chip-row"><span class="chip">instructor_profiles</span> <span class="chip">instructor_social_links</span></div>
   <div class="sheet">
     <pre class="mermaid">
 erDiagram
@@ -600,8 +600,6 @@ erDiagram
         text biography
         text expertise_summary
         varchar30 status
-        varchar30 verification_status
-        datetime verified_at
         numeric3_2 rating_average
         integer rating_count
         integer student_count
@@ -616,22 +614,10 @@ erDiagram
         integer display_order
         uuid id PK
     }
-    instructor_verifications {
-        uuid user_id FK
-        varchar50 verification_type
-        varchar30 status
-        datetime submitted_at
-        datetime reviewed_at
-        uuid reviewed_by FK
-        jsonb metadata
-        uuid id PK
-    }
     instructor_profiles ||--o{ instructor_social_links : "instructor_user_id"
-    instructor_profiles ||--o{ instructor_verifications : "user_id"
     </pre>
   </div>
-  <div class="crossrefs"><div class="crossrefs-label">Reaches into</div><ul><li><code>instructor_profiles.user_id</code> &rarr; <a href="#identity-auth">Identity &amp; Auth</a> / <code>users.id</code></li>
-<li><code>instructor_verifications.reviewed_by</code> &rarr; <a href="#identity-auth">Identity &amp; Auth</a> / <code>users.id</code></li></ul></div>
+  <div class="crossrefs"><div class="crossrefs-label">Reaches into</div><ul><li><code>instructor_profiles.user_id</code> &rarr; <a href="#identity-auth">Identity &amp; Auth</a> / <code>users.id</code></li></ul></div>
 </section>
 
 <section class="domain" id="course-structure">

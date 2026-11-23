@@ -132,7 +132,7 @@ export type Student = {
   completion_percentage: number; completed_at: string | null; last_accessed_at: string | null;
 };
 export type Instructor = { user_id: string; display_name: string; role: string };
-export type Profile = { professional_title: string | null; biography: string | null; expertise_summary: string | null; status: string; verification_status: string };
+export type Profile = { professional_title: string | null; biography: string | null; expertise_summary: string | null; status: string };
 export type Account = {
   id: string; email: string; display_name: string; status: string; roles: string[];
   first_name: string | null; last_name: string | null; bio: string | null; headline: string | null;
@@ -181,7 +181,7 @@ export type Role = { code: string; name: string; description: string | null; per
 export type AdminStats = {
   users_total: number; users_suspended: number; users_by_role: Record<string, number>;
   courses_by_status: Record<string, number>; enrollments_total: number; orders_paid: number;
-  revenue: number; currency_code: string; open_review_reports: number; pending_verifications: number;
+  revenue: number; currency_code: string; open_review_reports: number;
 };
 export type AdminCourse = {
   id: string; title: string; slug: string; status: string; owner_name: string; owner_email: string;
@@ -194,10 +194,6 @@ export type AdminOrder = {
 export type ReviewReport = {
   id: string; review_id: string; review_body: string | null; review_rating: number; review_status: string;
   reported_by_name: string; reason: string; status: string; created_at: string;
-};
-export type Verification = {
-  id: string; user_id: string; instructor_name: string | null; verification_type: string; status: string;
-  details: string | null; submitted_at: string; reviewed_at: string | null;
 };
 export type Category = { id: string; parent_id: string | null; name: string; slug: string; description: string | null; display_order: number };
 

@@ -39,7 +39,6 @@ class AdminStats(BaseModel):
     revenue: float
     currency_code: str
     open_review_reports: int
-    pending_verifications: int
 
 
 class AdminCourseOut(BaseModel):

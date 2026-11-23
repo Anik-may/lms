@@ -12,7 +12,7 @@ import { Alert, button, Field, input, inputBase, Tabs } from "@/components/ui";
 const clean = (s: string) => s.normalize("NFKC").replace(/[\u200B-\u200F\u2060\uFEFF\u00AD]/g, "");
 
 const perks = [
-  { icon: BookOpen, text: "Courses from teachers verified by our team" },
+  { icon: BookOpen, text: "Courses reviewed by our team before they go live" },
   { icon: MessagesSquare, text: "Ask questions and get answers from the instructor" },
   { icon: Award, text: "Track progress and earn certificates" },
 ];

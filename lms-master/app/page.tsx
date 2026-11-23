@@ -11,7 +11,7 @@ import { button, btnSecondary, EmptyState, Skeleton } from "@/components/ui";
 
 const features = [
   { icon: Clock, title: "Learn at your pace", text: "Lessons are yours to revisit any time. Pick up exactly where you left off.", tone: "bg-brand-50 text-brand-600" },
-  { icon: Users, title: "Taught by practitioners", text: "Teachers are verified by our team before their courses reach you.", tone: "bg-orange-50 text-orange-700" },
+  { icon: Users, title: "Taught by practitioners", text: "Every course is reviewed by our team before it reaches you.", tone: "bg-orange-50 text-orange-700" },
   { icon: MessagesSquare, title: "Ask the teacher", text: "Stuck on a lesson? Post a question and get an answer from the instructor.", tone: "bg-amber-50 text-amber-700" },
   { icon: Award, title: "Earn certificates", text: "Finish a course to earn a certificate you can share.", tone: "bg-lime-50 text-lime-700" },
 ];

@@ -1,5 +1,5 @@
 """Non-payment routes: notifications, wishlist, certificates, taxonomy, search, reviews,
-discussions, moderation and instructor verification."""
+discussions and moderation."""
 
 import uuid
 from datetime import datetime, timezone
@@ -121,16 +121,3 @@ async def test_platform_routes(c):  # noqa: F811
     assert (await c.post(f"{T}/notifications/read-all", headers=student["h"])).status_code == 204
     assert (await c.get(f"{T}/notifications?unread_only=true", headers=student["h"])).json()["unread_count"] == 0
     assert (await c.delete(f"{T}/notifications/{nid}", headers=student["h"])).status_code == 204
-
-    # instructor verification
-    r = await c.post(f"{T}/teaching/verification", headers=teacher["h"], json={"verification_type": "IDENTITY", "details": "id"})
-    assert r.status_code == 201, r.text
-    vid = r.json()["id"]
-    assert (await c.post(f"{T}/teaching/verification", headers=teacher["h"], json={"verification_type": "IDENTITY"})).status_code == 409
-    assert len((await c.get(f"{T}/teaching/verification", headers=teacher["h"])).json()) == 1
-    assert (await c.get(f"{T}/admin/verifications", headers=teacher["h"])).status_code == 403
-    assert vid in ids(await c.get(f"{T}/admin/verifications", headers=admin["h"]))
-    r = await c.patch(f"{T}/admin/verifications/{vid}", headers=admin["h"], json={"decision": "APPROVED"})
-    assert r.status_code == 200 and r.json()["status"] == "APPROVED"
-    assert (await c.patch(f"{T}/admin/verifications/{vid}", headers=admin["h"], json={"decision": "REJECTED"})).status_code == 409
-    assert (await c.get(f"{T}/teaching/profile", headers=teacher["h"])).json()["verification_status"] == "VERIFIED"

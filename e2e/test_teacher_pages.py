@@ -5,9 +5,7 @@ from playwright.sync_api import expect
 from helpers import RUN, WEB, build_course, call, new_user, see, sign_in, tab
 
 
-def test_teacher_handles_student_activity(new_page, request):
-    # A pending verification request may already exist; the page shows that 409 to the user.
-    request.node.allowed_failure_parts = ("/teaching/verification",)
+def test_teacher_handles_student_activity(new_page):
     teacher = new_user("Tara Teacher", role="TEACHER")
     student = new_user("Nia Student")
     co = new_user("Cora Co")
@@ -80,14 +78,11 @@ def test_teacher_handles_student_activity(new_page, request):
     page.get_by_role("button", name="Request payout").click()
     see(page, "Payout requested")
 
-    # profile + verification
+    # profile
     page.get_by_role("link", name="Profile", exact=True).first.click()
     page.get_by_label("Professional title").fill("Landscape photographer")
     page.get_by_role("button", name="Save profile").click()
     see(page, "Instructor profile saved")
-    page.get_by_label("Details").fill("https://example.com/portfolio")
-    page.get_by_role("button", name="Request").click()
-    see(page, "Request sent")
     page.reload()
     expect(page.get_by_label("Professional title")).to_have_value("Landscape photographer", timeout=15000)
 

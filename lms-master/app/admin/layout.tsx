@@ -1,7 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { BadgeCheck, BookOpen, Flag, FolderTree, KeyRound, LayoutDashboard, MailPlus, Receipt, Users } from "lucide-react";
+import { BookOpen, Flag, FolderTree, KeyRound, LayoutDashboard, MailPlus, Receipt, Users } from "lucide-react";
 import DashboardShell, { NavItem, NoAccess, workspaceLinks } from "@/components/DashboardShell";
 import { AdminMeContext } from "@/components/admin/shared";
 import { can, isStaff, useMe } from "@/lib/auth";
@@ -16,7 +16,6 @@ const nav: (NavItem & { perm: string | null })[] = [
   { href: "/admin/categories", label: "Categories", icon: FolderTree, perm: "course.publish" },
   { href: "/admin/orders", label: "Orders", icon: Receipt, perm: "order.read" },
   { href: "/admin/reports", label: "Review reports", icon: Flag, perm: "review.moderate" },
-  { href: "/admin/verifications", label: "Teacher verification", icon: BadgeCheck, perm: "course.publish" },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

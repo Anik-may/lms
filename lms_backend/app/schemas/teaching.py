@@ -46,7 +46,6 @@ class InstructorProfileOut(BaseModel):
     biography: str | None
     expertise_summary: str | None
     status: str
-    verification_status: str
 
 
 class ReviewOut(BaseModel):

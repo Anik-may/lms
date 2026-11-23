@@ -2,10 +2,9 @@
 import { useEffect, useState } from "react";
 import { Loader2, Save } from "lucide-react";
 import { Profile, send } from "@/lib/api";
-import VerificationCard from "@/components/teach/VerificationCard";
 import AccountCard from "@/components/AccountCard";
 import { useApi } from "@/lib/useApi";
-import { btn, Card, Field, Flash, input, Msg, PageHeader, State, StatusBadge, Tabs } from "@/components/ui";
+import { btn, Card, Field, Flash, input, Msg, PageHeader, State, Tabs } from "@/components/ui";
 
 type Tab = "instructor" | "account";
 
@@ -38,7 +37,6 @@ export default function ProfilePage() {
       <PageHeader
         title="Profile"
         description="How you appear to students, and your account details."
-        actions={data && <span className="flex items-center gap-2 text-sm text-slate-500">Verification <StatusBadge status={data.verification_status} /></span>}
       />
       <Tabs<Tab> value={tab} options={["instructor", "account"]} labels={{ instructor: "Instructor profile", account: "Account" }} onChange={setTab} />
 
@@ -63,7 +61,6 @@ export default function ProfilePage() {
               </form>
             </State>
           </Card>
-          <VerificationCard />
         </>
       ) : (
         <AccountCard />

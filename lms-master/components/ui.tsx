@@ -244,10 +244,10 @@ export function Badge({ children, tone = "gray", className }: { children: React.
 }
 
 const STATUS_TONES: Record<string, Tone> = {
-  ACTIVE: "green", PUBLISHED: "green", PAID: "green", APPROVED: "green", VERIFIED: "green", COMPLETED: "green", RESOLVED: "green", GRADED: "green",
+  ACTIVE: "green", PUBLISHED: "green", PAID: "green", APPROVED: "green", COMPLETED: "green", RESOLVED: "green", GRADED: "green",
   ACCEPTED: "green",
   SUSPENDED: "red", REJECTED: "red", FAILED: "red", HIDDEN: "red", CANCELLED: "red", REVOKED: "red",
-  OPEN: "amber", PENDING: "amber", UNDER_REVIEW: "amber", SUBMITTED: "amber", REQUESTED: "amber", UNVERIFIED: "amber",
+  OPEN: "amber", PENDING: "amber", UNDER_REVIEW: "amber", SUBMITTED: "amber", REQUESTED: "amber",
   DRAFT: "gray", ARCHIVED: "gray", DISMISSED: "gray", REFUNDED: "gray", EXPIRED: "gray",
 };
 

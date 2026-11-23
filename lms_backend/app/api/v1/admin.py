@@ -12,7 +12,6 @@ from app.models.courses import Course
 from app.models.enrollment import Enrollment
 from app.models.enums import CourseStatus, OrderStatus
 from app.models.identity import User, UserInvitation
-from app.models.instructor import InstructorVerification
 from app.models.rbac import Role, UserRoleAssignment
 from app.models.reviews import ReviewReport
 from app.schemas.admin import (
@@ -97,11 +96,6 @@ async def platform_stats(
         currency_code=_CURRENCY,
         open_review_reports=await db.scalar(
             select(func.count()).select_from(ReviewReport).where(ReviewReport.status == "OPEN")
-        ),
-        pending_verifications=await db.scalar(
-            select(func.count())
-            .select_from(InstructorVerification)
-            .where(InstructorVerification.status == "PENDING")
         ),
     )
 

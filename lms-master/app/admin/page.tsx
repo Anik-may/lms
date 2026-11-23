@@ -45,7 +45,6 @@ export default function AdminOverview() {
   const attention = d
     ? [
         can("review.moderate") && d.open_review_reports > 0 && { href: "/admin/reports", icon: Flag, text: `${d.open_review_reports} open review report${d.open_review_reports === 1 ? "" : "s"}` },
-        can("course.publish") && d.pending_verifications > 0 && { href: "/admin/verifications", icon: BadgeCheck, text: `${d.pending_verifications} teacher verification${d.pending_verifications === 1 ? "" : "s"} waiting` },
         can("course.publish") && (d.courses_by_status.UNDER_REVIEW ?? 0) > 0 && { href: "/admin/courses", icon: BookOpen, text: `${d.courses_by_status.UNDER_REVIEW} course${d.courses_by_status.UNDER_REVIEW === 1 ? "" : "s"} under review` },
       ].filter(Boolean) as { href: string; icon: React.ComponentType<{ className?: string }>; text: string }[]
     : [];
@@ -74,7 +73,7 @@ export default function AdminOverview() {
               <div className="grid gap-6 lg:grid-cols-3">
                 <Card title="Needs attention">
                   {attention.length === 0 ? (
-                    <EmptyState icon={BadgeCheck} title="All clear" description="No reports, verifications or reviews waiting." />
+                    <EmptyState icon={BadgeCheck} title="All clear" description="No reports or reviews waiting." />
                   ) : (
                     <ul className="space-y-2">
                       {attention.map(({ href, icon: Icon, text }) => (

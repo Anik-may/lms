@@ -7,7 +7,7 @@ and can run against a dev database at any time.
 | Suite | Covers |
 |---|---|
 | `test_teacher_course_building.py` | Teacher builds a course in the UI: details, thumbnail, video/article/quiz/assignment lessons, publishing, reordering, price, enrolling and suspending students, phone width |
-| `test_teacher_pages.py` | Notifications, Q&A, grading and re-grading, review replies, earnings and payouts, profile and verification, tags, co-instructor access |
+| `test_teacher_pages.py` | Notifications, Q&A, grading and re-grading, review replies, earnings and payouts, profile, tags, co-instructor access |
 | `test_student.py` | Public course page, signed-out previews, test-mode checkout, the course player through to the certificate, replies reaching the student |
 
 ## Run
