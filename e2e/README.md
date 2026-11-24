@@ -13,7 +13,9 @@ and can run against a dev database at any time.
 ## Run
 
 The stack must be up (`docker compose up --build` from the repo root) with
-`ALLOW_MOCK_PAYMENTS=true` (set in the root `.env` for local development).
+`ALLOW_MOCK_PAYMENTS=true` (set in the root `.env` for local development). Leave
+`STRIPE_SECRET_KEY` unset for these runs: with it set, checkout hands off to Stripe's own page
+instead of the simulated card form the student suite fills in.
 
 ```bash
 ./e2e/run.sh            # all suites

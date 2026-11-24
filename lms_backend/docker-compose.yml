@@ -18,6 +18,9 @@ services:
       S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:9000}
       # "Test payment" checkout that charges nobody. Never enable where money is real.
       ALLOW_MOCK_PAYMENTS: ${ALLOW_MOCK_PAYMENTS:-false}
+      # Real card payments through Stripe Checkout. Without a key, checkout uses the simulated cards.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       S3_ACCESS_KEY: lmsaccess
       S3_SECRET_KEY: lmssecret123
       # Email goes to Mailpit (inbox at http://localhost:8025) unless you point these at a

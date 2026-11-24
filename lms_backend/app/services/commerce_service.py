@@ -1,3 +1,4 @@
+import logging
 import secrets
 import uuid
 from datetime import datetime, timezone
@@ -15,9 +16,12 @@ from app.models.enrollment import Enrollment
 from app.models.enums import CourseStatus, EnrollmentSource, OrderStatus, PaymentStatus
 from app.models.pricing import CoursePrice
 from app.models.revenue import InstructorLedgerEntry, RevenueAllocation, RevenueTransaction
-from app.services import fake_stripe
+from app.models.identity import User
+from app.services import fake_stripe, stripe_gateway
 from app.services.enrollment_service import create_enrollment
 from app.services.notification_service import notify
+
+logger = logging.getLogger("app.commerce")
 
 DEFAULT_CURRENCY = "USD"
 PLATFORM_COMMISSION_PERCENT = Decimal("30.00")
@@ -140,11 +144,14 @@ async def checkout(db: AsyncSession, user_id: uuid.UUID, idempotency_key: str) -
 FREE = "free"
 MOCK = "mock"
 CARD = fake_stripe.PROVIDER
+STRIPE = stripe_gateway.PROVIDER
 
 
 def payment_providers() -> list[str]:
-    """Providers this deployment can take payment through. Cards go through the fake Stripe."""
-    return [CARD, MOCK] if settings.allow_mock_payments else [CARD]
+    """Providers this deployment can take payment through: the real Stripe when it has a
+    key, otherwise the fake one so demos still work."""
+    cards = STRIPE if stripe_gateway.enabled() else CARD
+    return [cards, MOCK] if settings.allow_mock_payments else [cards]
 
 
 def _verify_payment(order: Order, provider: str) -> None:
@@ -160,11 +167,16 @@ def _verify_payment(order: Order, provider: str) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Test payments are turned off")
     if provider == CARD:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pay by card with /orders/{id}/pay/card")
+    if provider == STRIPE:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pay with Stripe through /orders/{id}/pay/stripe")
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported payment provider")
 
 
 async def _pending_order(db: AsyncSession, user_id: uuid.UUID, order_id: uuid.UUID) -> Order:
-    order = await db.get(Order, order_id, options=[selectinload(Order.items)])
+    # Locked so two payments for one order (a webhook and the shopper's return, say) queue up.
+    order = await db.scalar(
+        select(Order).where(Order.id == order_id).options(selectinload(Order.items)).with_for_update()
+    )
     if order is None or order.user_id != user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
     if order.status != OrderStatus.PENDING:
@@ -206,6 +218,8 @@ async def pay_with_card(
 ) -> Payment:
     """Charge a card through the fake Stripe. Declines are recorded as FAILED payments
     on the order and returned to the shopper as 402 with Stripe's code and message."""
+    if stripe_gateway.enabled():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pay with Stripe through /orders/{id}/pay/stripe")
     order = await _pending_order(db, user_id, order_id)
     if order.grand_total == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This order is free; no card needed")
@@ -234,6 +248,151 @@ async def pay_with_card(
     return await _mark_paid(db, user_id, order, CARD, result.id, result.brand, result.last4)
 
 
+def _require_stripe() -> None:
+    if not stripe_gateway.enabled():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Stripe payments aren't set up")
+
+
+async def _stripe_payments(db: AsyncSession, order_id: uuid.UUID) -> list[Payment]:
+    """Checkout sessions opened for an order that we haven't seen the end of yet."""
+    rows = await db.scalars(
+        select(Payment)
+        .where(
+            Payment.order_id == order_id,
+            Payment.provider == STRIPE,
+            Payment.status == PaymentStatus.PENDING,
+        )
+        .order_by(Payment.created_at)
+    )
+    return list(rows)
+
+
+async def start_stripe_checkout(db: AsyncSession, user: User, order_id: uuid.UUID) -> str:
+    """Open a Stripe Checkout page for a pending order and return its address. A session
+    that is still open is reused, so paying twice for one order takes real effort."""
+    _require_stripe()
+    order = await _pending_order(db, user.id, order_id)
+    if order.grand_total == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This order is free; no payment needed")
+
+    try:
+        for payment in await _stripe_payments(db, order.id):
+            session = await stripe_gateway.get_session(payment.provider_payment_id)
+            if await _apply_stripe_session(db, order, payment, session):
+                await db.commit()
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Order is already PAID")
+            if session.status == "open" and session.url:
+                await db.commit()
+                return session.url
+
+        items = []
+        for item in order.items:
+            course = await db.get(Course, item.course_id)
+            items.append(
+                stripe_gateway.LineItem(
+                    name=course.title if course else "Course", amount=Decimal(str(item.final_amount))
+                )
+            )
+        back = f"{settings.frontend_base_url}/checkout?order={order.id}"
+        session = await stripe_gateway.create_session(
+            order_id=str(order.id),
+            order_number=order.order_number,
+            currency=order.currency_code,
+            items=items,
+            customer_email=user.email,
+            success_url=f"{back}&stripe=success",
+            cancel_url=f"{back}&stripe=cancelled",
+        )
+    except stripe_gateway.StripeError as e:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+    db.add(
+        Payment(
+            order_id=order.id,
+            provider=STRIPE,
+            provider_payment_id=session.id,
+            amount=order.grand_total,
+            currency_code=order.currency_code,
+            status=PaymentStatus.PENDING,
+        )
+    )
+    await db.commit()
+    return session.url
+
+
+async def _apply_stripe_session(
+    db: AsyncSession, order: Order, payment: Payment, session: stripe_gateway.StripeSession
+) -> bool:
+    """Bring our record of one Checkout Session up to date. True if it paid the order.
+    The caller holds the order lock and commits."""
+    if session.order_id != str(order.id):
+        logger.warning("Stripe session %s does not belong to order %s", session.id, order.id)
+        return False
+    if session.paid:
+        expected = stripe_gateway.to_minor_units(Decimal(str(order.grand_total)), order.currency_code)
+        if session.amount_total != expected or (session.currency or "").upper() != order.currency_code:
+            logger.error("Stripe session %s paid %s %s, order %s expects %s %s", session.id,
+                         session.amount_total, session.currency, order.id, expected, order.currency_code)
+            return False
+        if order.status != OrderStatus.PENDING:
+            # Paid some other way in the meantime; this charge needs refunding by hand.
+            logger.error("Stripe session %s paid for order %s, which is already %s",
+                         session.id, order.id, order.status.value)
+            return False
+        await _mark_paid(db, order.user_id, order, STRIPE, session.payment_intent_id or session.id,
+                         session.card_brand, session.card_last4, payment=payment, commit=False)
+        return True
+    if session.status == "expired":
+        payment.status = PaymentStatus.CANCELLED
+    elif session.status == "complete" and session.payment_status == "unpaid":
+        pass  # a slow payment method; Stripe tells the webhook when it lands or fails
+    return False
+
+
+async def sync_stripe_order(db: AsyncSession, order_id: uuid.UUID, user_id: uuid.UUID | None = None) -> Order:
+    """Ask Stripe about an order's open sessions and record what happened. Called when the
+    shopper comes back from Stripe (user_id set) and by the webhook."""
+    order = await db.scalar(
+        select(Order).where(Order.id == order_id).options(selectinload(Order.items)).with_for_update()
+    )
+    if order is None or (user_id is not None and order.user_id != user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    if stripe_gateway.enabled():
+        try:
+            for payment in await _stripe_payments(db, order.id):
+                session = await stripe_gateway.get_session(payment.provider_payment_id)
+                await _apply_stripe_session(db, order, payment, session)
+        except stripe_gateway.StripeError as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+    await db.commit()
+    return await db.scalar(
+        select(Order)
+        .where(Order.id == order_id)
+        .options(selectinload(Order.items), selectinload(Order.payments))
+        .execution_options(populate_existing=True)
+    )
+
+
+async def handle_stripe_event(db: AsyncSession, payload: bytes, signature: str | None) -> None:
+    if not (stripe_gateway.enabled() and settings.stripe_webhook_secret):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stripe webhooks aren't set up")
+    try:
+        _, session_id = stripe_gateway.parse_event(payload, signature)
+    except stripe_gateway.BadSignature:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
+    if session_id is None:
+        return
+    order_id = await db.scalar(
+        select(Payment.order_id).where(Payment.provider == STRIPE, Payment.provider_payment_id == session_id)
+    )
+    if order_id is None:
+        return  # not one of ours, or already recorded under its payment id
+    await db.rollback()  # end the read transaction so the order lock starts a fresh one
+    await sync_stripe_order(db, order_id)
+
+
 async def _mark_paid(
     db: AsyncSession,
     user_id: uuid.UUID,
@@ -242,21 +401,24 @@ async def _mark_paid(
     provider_payment_id: str,
     card_brand: str | None = None,
     card_last4: str | None = None,
+    payment: Payment | None = None,
+    commit: bool = True,
 ) -> Payment:
     now = datetime.now(timezone.utc)
 
-    payment = Payment(
-        order_id=order.id,
-        provider=provider,
-        provider_payment_id=provider_payment_id,
-        amount=order.grand_total,
-        currency_code=order.currency_code,
-        status=PaymentStatus.CAPTURED,
-        captured_at=now,
-        card_brand=card_brand,
-        card_last4=card_last4,
-    )
-    db.add(payment)
+    if payment is None:
+        payment = Payment(
+            order_id=order.id,
+            provider=provider,
+            amount=order.grand_total,
+            currency_code=order.currency_code,
+        )
+        db.add(payment)
+    payment.provider_payment_id = provider_payment_id
+    payment.status = PaymentStatus.CAPTURED
+    payment.captured_at = now
+    payment.card_brand = card_brand
+    payment.card_last4 = card_last4
     order.status = OrderStatus.PAID
 
     revenue_transaction = RevenueTransaction(
@@ -304,9 +466,17 @@ async def _mark_paid(
             )
         )
 
-        await create_enrollment(
-            db, user_id, item.course_id, EnrollmentSource.PURCHASE, order_item_id=item.id
+        enrolled = await db.scalar(
+            select(Enrollment.id).where(
+                Enrollment.user_id == user_id, Enrollment.course_id == item.course_id
+            )
         )
+        # Money already taken by Stripe must not be lost because a teacher added the
+        # student by hand while they were paying.
+        if enrolled is None or provider != STRIPE:
+            await create_enrollment(
+                db, user_id, item.course_id, EnrollmentSource.PURCHASE, order_item_id=item.id
+            )
         course = await db.get(Course, item.course_id)
         notify(
             db,
@@ -320,6 +490,7 @@ async def _mark_paid(
     revenue_transaction.platform_fee = total_platform_fee
     revenue_transaction.net_amount = order.grand_total - total_platform_fee
 
-    await db.commit()
-    await db.refresh(payment)
+    if commit:
+        await db.commit()
+        await db.refresh(payment)
     return payment

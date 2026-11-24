@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
-import { CheckCircle2, CreditCard, FlaskConical, Loader2, Lock, ShoppingCart, Trash2 } from "lucide-react";
+import { CheckCircle2, CreditCard, ExternalLink, FlaskConical, Loader2, Lock, ShoppingCart, Trash2 } from "lucide-react";
 import { BRAND, Course, MyOrder, Payment, get, getToken, send } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { Alert, btn, button, Card, EmptyState, Field, input, money, Skeleton } from "@/components/ui";
@@ -94,12 +94,18 @@ function Checkout() {
   const router = useRouter();
   const params = useSearchParams();
   const adding = params.get("course");
+  // Set when the shopper comes back from Stripe, or resumes an unpaid order from their orders page.
+  const orderId = params.get("order");
+  const stripeReturn = params.get("stripe");
+  const [pending, setPending] = useState<MyOrder | null>(null);
+  const [notice, setNotice] = useState("");
   const [cart, setCart] = useState<Cart | null>(null);
   const [courses, setCourses] = useState<Record<string, Course>>({});
   const [err, setErr] = useState("");
   const [paying, setPaying] = useState(false);
   const [done, setDone] = useState<{ order: MyOrder; payment: Payment | null; courses: Course[] } | null>(null);
   const config = useApi<PayConfig>("/payments/config");
+  const usesStripe = config.data?.providers.includes("stripe") ?? false;
   // One key per cart: a retry after a declined card reuses the same order instead of creating another.
   const newKey = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
   const idem = useRef(newKey());
@@ -109,6 +115,22 @@ function Checkout() {
     let cancelled = false;
     (async () => {
       try {
+        if (orderId) {
+          // The server asks Stripe whether this order was paid; the address bar proves nothing.
+          const order = await send<MyOrder>("POST", `/orders/${orderId}/pay/stripe/confirm`);
+          const found = await Promise.all(order.items.map((i) => get<Course>(`/courses/${i.course_id}`).catch(() => null)));
+          if (cancelled) return;
+          const list = found.filter(Boolean) as Course[];
+          setCourses(Object.fromEntries(list.map((d) => [d.id, d])));
+          setCart({ id: "", currency_code: order.currency_code, items: [] });
+          if (order.status === "PAID") setDone({ order, payment: order.payments?.find((p) => p.status === "CAPTURED") ?? null, courses: list });
+          else if (order.status === "PENDING") {
+            setPending(order);
+            if (stripeReturn === "cancelled") setNotice("Payment cancelled. You haven't been charged.");
+            if (stripeReturn === "success") setNotice("Your payment is still being confirmed. This page will update when it goes through.");
+          } else setErr(`This order is ${order.status.toLowerCase()}.`);
+          return;
+        }
         if (adding) {
           await send("POST", "/cart/items", { course_id: adding }).catch((e: Error) => {
             if (/already enrolled/i.test(e.message)) router.replace(`/learn/${adding}`);
@@ -125,7 +147,20 @@ function Checkout() {
       }
     })();
     return () => { cancelled = true; };
-  }, [adding, router]);
+  }, [adding, orderId, stripeReturn, router]);
+
+  // A payment Stripe is still confirming: keep asking until it lands.
+  useEffect(() => {
+    if (!pending || stripeReturn !== "success") return;
+    const t = setInterval(async () => {
+      const order = await send<MyOrder>("POST", `/orders/${pending.id}/pay/stripe/confirm`).catch(() => null);
+      if (order?.status === "PAID") {
+        setPending(null);
+        setDone({ order, payment: order.payments?.find((p) => p.status === "CAPTURED") ?? null, courses: order.items.map((i) => courses[i.course_id]).filter(Boolean) });
+      }
+    }, 4000);
+    return () => clearInterval(t);
+  }, [pending, stripeReturn, courses]);
 
   async function remove(courseId: string) {
     setErr("");
@@ -137,18 +172,23 @@ function Checkout() {
     setErr("");
     setPaying(true);
     try {
-      const order = await send<MyOrder>("POST", "/checkout", { idempotency_key: idem.current });
+      const order = pending ?? (await send<MyOrder>("POST", "/checkout", { idempotency_key: idem.current }));
       let payment: Payment | null = null;
       if (order.grand_total === 0) await send("POST", `/orders/${order.id}/pay`, { provider: "free", provider_payment_id: `free-${order.id}` });
+      else if (usesStripe) {
+        // Stripe hosts the card form. The shopper comes back to /checkout?order=... afterwards.
+        const { url } = await send<{ url: string }>("POST", `/orders/${order.id}/pay/stripe`);
+        window.location.assign(url);
+        return;
+      }
       else if (card) payment = await send<Payment>("POST", `/orders/${order.id}/pay/card`, card);
       else throw new Error("Enter your card details.");
       setDone({ order, payment, courses: cart.items.map((i) => courses[i.course_id]).filter(Boolean) });
       setCart({ ...cart, items: [] });
     } catch (e) {
       setErr((e as Error).message);
-    } finally {
-      setPaying(false);
     }
+    setPaying(false);
   }
 
   if (done)
@@ -169,15 +209,15 @@ function Checkout() {
 
   if (!cart) return err ? <Alert tone="error">{err}</Alert> : <Skeleton className="h-64 w-full rounded-xl" />;
 
-  const items = cart.items.map((i) => ({ ...i, course: courses[i.course_id] }));
-  const total = items.reduce((n, i) => n + (i.course?.price ?? 0), 0);
+  const items = (pending?.items ?? cart.items).map((i) => ({ ...i, course: courses[i.course_id] }));
+  const total = pending ? pending.grand_total : items.reduce((n, i) => n + (i.course?.price ?? 0), 0);
   const cur = cart.currency_code;
   const takesCards = config.data?.providers.includes("fake_stripe") ?? false;
-  const canPay = items.length > 0 && (total === 0 || takesCards);
+  const canPay = items.length > 0 && (total === 0 || takesCards || usesStripe);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
-      <Card title="Your cart" description={`${items.length} course${items.length === 1 ? "" : "s"}`} flush className="self-start">
+      <Card title={pending ? `Order ${pending.order_number}` : "Your cart"} description={`${items.length} course${items.length === 1 ? "" : "s"}`} flush className="self-start">
         {items.length === 0 ? (
           <EmptyState icon={ShoppingCart} title="Your cart is empty" description="Find a course to get started." action={<Link className={btn} href="/courses">Browse courses</Link>} />
         ) : (
@@ -189,7 +229,7 @@ function Checkout() {
                   {i.course?.instructor_name && <p className="text-xs text-slate-500">by {i.course.instructor_name}</p>}
                 </div>
                 <span className="font-semibold tabular-nums text-slate-900">{i.course?.price ? money(i.course.price, cur) : "Free"}</span>
-                <button className={button("plain", "sm")} onClick={() => remove(i.course_id)} disabled={paying} aria-label={`Remove ${i.course?.title ?? "course"}`}><Trash2 className="size-4" /></button>
+                {!pending && <button className={button("plain", "sm")} onClick={() => remove(i.course_id)} disabled={paying} aria-label={`Remove ${i.course?.title ?? "course"}`}><Trash2 className="size-4" /></button>}
               </li>
             ))}
           </ul>
@@ -206,14 +246,16 @@ function Checkout() {
         ) : (
           <>
             {total > 0 && config.data?.test_mode && (
-              <Alert tone="info" className="mt-4"><span className="inline-flex items-center gap-1.5 font-semibold"><FlaskConical className="size-4" /> Test mode</span><br />Payments go through a simulated card processor. No real money is charged.</Alert>
+              <Alert tone="info" className="mt-4"><span className="inline-flex items-center gap-1.5 font-semibold"><FlaskConical className="size-4" /> Test mode</span><br />{usesStripe ? "Stripe is in test mode. Pay with card 4242 4242 4242 4242, any future date and any CVC." : "Payments go through a simulated card processor."} No real money is charged.</Alert>
             )}
+            {notice && <Alert tone="info" className="mt-4">{notice}</Alert>}
+            {total > 0 && usesStripe && <p className="mt-4 flex items-start gap-2 text-sm text-slate-600"><ExternalLink className="mt-0.5 size-4 shrink-0 text-slate-400" /> You&apos;ll enter your card on Stripe&apos;s secure page, then come straight back here.</p>}
             {total > 0 && takesCards && items.length > 0 && <CardForm disabled={paying} onCard={(c) => pay(c)} />}
-            {total > 0 && !takesCards && <Alert tone="error" className="mt-4">Card payments aren&apos;t available right now.</Alert>}
+            {total > 0 && !takesCards && !usesStripe && <Alert tone="error" className="mt-4">Card payments aren&apos;t available right now.</Alert>}
             <button
               className={`${button("primary", "lg")} mt-4 w-full`}
               disabled={!canPay || paying}
-              {...(total > 0 ? { type: "submit", form: "card-form" } : { onClick: () => pay() })}
+              {...(total > 0 && takesCards ? { type: "submit", form: "card-form" } : { onClick: () => pay() })}
             >
               {paying ? <Loader2 className="size-5 animate-spin" /> : total === 0 ? <CheckCircle2 className="size-5" /> : <Lock className="size-4" />}
               {total === 0 ? "Complete enrollment" : `Pay ${money(total, cur)}`}

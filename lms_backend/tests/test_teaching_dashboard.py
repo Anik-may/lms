@@ -259,6 +259,7 @@ async def test_payments_cannot_be_faked(c, monkeypatch):
     assert (await pay("stripe")).status_code == 400          # unverifiable provider
     assert (await pay("free")).status_code == 400            # not a free order
     monkeypatch.setattr(settings, "allow_mock_payments", False)
+    monkeypatch.setattr(settings, "stripe_secret_key", None)  # no Stripe key: the fake one stands in
     assert (await c.get(f"{T}/payments/config")).json() == {"providers": ["fake_stripe"], "test_mode": True}
     assert (await pay("fake_stripe")).status_code == 400     # cards are charged by the server, not claimed
     assert (await pay("mock")).status_code == 403            # test payments switched off
@@ -273,7 +274,10 @@ async def test_payments_cannot_be_faked(c, monkeypatch):
     assert (await c.post(f"{T}/cart/items", headers=buyer["h"], json={"course_id": cid})).status_code == 409
 
 
-async def test_fake_stripe_card_payments(c):
+async def test_fake_stripe_card_payments(c, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "stripe_secret_key", None)
     T = "/api/v1"
     teacher = await _user(c, "card-teacher", teacher=True)
     buyer = await _user(c, "card-buyer")
@@ -313,3 +317,100 @@ async def test_fake_stripe_card_payments(c):
     assert order["status"] == "PAID"
     assert (await c.get(f"{T}/courses/{cid}/progress/contents", headers=buyer["h"])).status_code == 200
     assert (await card("4242424242424242")).status_code == 409  # already paid
+
+
+async def test_stripe_checkout(c, monkeypatch):
+    """The real Stripe flow, with Stripe itself replaced by an in-memory stand-in."""
+    from app.core.config import settings
+    from app.services import stripe_gateway as sg
+
+    T = "/api/v1"
+    teacher = await _user(c, "stripe-teacher", teacher=True)
+    buyer = await _user(c, "stripe-buyer")
+    other = await _user(c, "stripe-other")
+    cid = (await c.post(f"{T}/courses", headers=teacher["h"], json={
+        "title": "Striped", "language_code": "en", "slug": f"striped-{RUN}"})).json()["id"]
+    await c.put(f"{T}/courses/{cid}/price", headers=teacher["h"], json={"amount": "25.50"})
+    await c.patch(f"{T}/courses/{cid}/status", headers=teacher["h"], json={"status": "PUBLISHED"})
+    await c.post(f"{T}/cart/items", headers=buyer["h"], json={"course_id": cid})
+    oid = (await c.post(f"{T}/checkout", headers=buyer["h"], json={"idempotency_key": f"stripe-{RUN}"})).json()["id"]
+    start = lambda: c.post(f"{T}/orders/{oid}/pay/stripe", headers=buyer["h"])
+    confirm = lambda h=buyer["h"]: c.post(f"{T}/orders/{oid}/pay/stripe/confirm", headers=h)
+    hook = lambda sid, sig="t=1,v1=x": c.post(f"{T}/payments/stripe/webhook", content=sid, headers={"stripe-signature": sig})
+
+    # not configured: no Stripe route works, and nothing is charged
+    monkeypatch.setattr(settings, "stripe_secret_key", None)
+    assert (await start()).status_code == 400
+    assert (await hook("cs_x")).status_code == 503
+
+    monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_x")
+    monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_x")
+    monkeypatch.setattr(settings, "allow_mock_payments", False)
+    assert (await c.get(f"{T}/payments/config")).json() == {"providers": ["stripe"], "test_mode": True}
+    assert (await hook("cs_x")).status_code == 400  # a call Stripe did not sign
+
+    sessions, created = {}, []
+
+    async def create_session(**kw):
+        s = sg.StripeSession(
+            id=f"cs_test_{uuid.uuid4().hex}", url=f"https://checkout.stripe.test/{len(created)}", status="open",
+            payment_status="unpaid", order_id=kw["order_id"], currency=kw["currency"].lower(),
+            amount_total=sum(sg.to_minor_units(i.amount, kw["currency"]) for i in kw["items"]),
+        )
+        sessions[s.id] = s
+        created.append((s, kw))
+        return s
+
+    async def get_session(sid):
+        return sessions[sid]
+
+    monkeypatch.setattr(sg, "create_session", create_session)
+    monkeypatch.setattr(sg, "get_session", get_session)
+    monkeypatch.setattr(sg, "parse_event", lambda payload, sig: ("checkout.session.completed", payload.decode()))
+
+    # with Stripe on, the simulated card form can't be used to skip paying
+    r = await c.post(f"{T}/orders/{oid}/pay/card", headers=buyer["h"],
+                     json={"number": "4242424242424242", "exp_month": 12, "exp_year": 40, "cvc": "123"})
+    assert r.status_code == 400
+    assert (await c.post(f"{T}/orders/{oid}/pay/stripe", headers=other["h"])).status_code == 404
+
+    r = await start()
+    assert r.status_code == 200, r.text
+    first, kw = created[0]
+    assert r.json() == {"url": first.url} and first.amount_total == 2550
+    assert kw["items"][0].name == "Striped" and kw["customer_email"] == buyer["email"]
+    assert kw["success_url"].endswith(f"/checkout?order={oid}&stripe=success")
+    assert (await start()).json() == {"url": first.url} and len(created) == 1  # open session is reused
+
+    # coming back without paying changes nothing, and other people can't confirm it
+    assert (await confirm()).json()["status"] == "PENDING"
+    assert (await confirm(other["h"])).status_code == 404
+
+    # an expired session is closed off and a fresh one opened
+    first.status = "expired"
+    second = created[1][0] if (await start()).status_code == 200 and len(created) == 2 else None
+    assert second is not None
+    order = (await confirm()).json()
+    assert sorted(p["status"] for p in order["payments"]) == ["CANCELLED", "PENDING"]
+
+    # a "paid" session for the wrong amount does not unlock the course
+    second.status, second.payment_status, second.amount_total = "complete", "paid", 100
+    assert (await confirm()).json()["status"] == "PENDING"
+
+    # Stripe's webhook reports the real payment
+    second.amount_total, second.payment_intent_id = 2550, f"pi_{RUN}"
+    second.card_brand, second.card_last4 = "visa", "4242"
+    assert (await hook("cs_unknown")).status_code == 200  # someone else's session: ignored
+    assert (await hook(second.id)).json() == {"received": True}
+    order = (await confirm()).json()
+    assert order["status"] == "PAID"
+    paid = [p for p in order["payments"] if p["status"] == "CAPTURED"]
+    assert len(paid) == 1 and paid[0]["provider"] == "stripe" and paid[0]["provider_payment_id"] == f"pi_{RUN}"
+    assert paid[0]["card_brand"] == "visa" and paid[0]["card_last4"] == "4242" and paid[0]["amount"] == 25.5
+    assert (await c.get(f"{T}/courses/{cid}/progress/contents", headers=buyer["h"])).status_code == 200
+
+    # repeats (Stripe retries webhooks) don't pay the teacher twice
+    assert (await hook(second.id)).status_code == 200
+    assert (await start()).status_code == 409
+    sold = [n for n in (await c.get(f"{T}/notifications", headers=teacher["h"])).json()["items"] if n["type"] == "COURSE_SOLD"]
+    assert len(sold) == 1

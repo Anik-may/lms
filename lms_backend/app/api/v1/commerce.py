@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,7 @@ from app.schemas.commerce import (
     PaymentCaptureRequest,
     PaymentOut,
 )
-from app.services import commerce_service
+from app.services import commerce_service, stripe_gateway
 
 router = APIRouter(tags=["commerce"])
 
@@ -27,8 +27,9 @@ router = APIRouter(tags=["commerce"])
 async def payment_config():
     """Which payment methods checkout can offer. Empty means paid courses can't be bought yet."""
     providers = commerce_service.payment_providers()
-    # Every provider here is pretend (the fake Stripe, or mock), so checkout always shows test mode.
-    return {"providers": providers, "test_mode": True}
+    # Only Stripe with a live key moves real money; the fake Stripe and mock are always pretend.
+    live = stripe_gateway.enabled() and not stripe_gateway.test_mode() and "mock" not in providers
+    return {"providers": providers, "test_mode": not live}
 
 
 @router.get("/cart", response_model=CartOut)
@@ -111,3 +112,34 @@ async def pay_order_by_card(
     return await commerce_service.pay_with_card(
         db, current_user.id, order_id, payload.number, payload.exp_month, payload.exp_year, payload.cvc
     )
+
+
+@router.post("/orders/{order_id}/pay/stripe")
+async def pay_order_with_stripe(
+    order_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a Stripe Checkout for the order. Send the shopper's browser to the returned url."""
+    return {"url": await commerce_service.start_stripe_checkout(db, current_user, order_id)}
+
+
+@router.post("/orders/{order_id}/pay/stripe/confirm", response_model=OrderOut)
+async def confirm_stripe_payment(
+    order_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Called when the shopper returns from Stripe: checks with Stripe whether the order was
+    paid and, if so, enrolls them. Safe to call any number of times."""
+    return await commerce_service.sync_stripe_order(db, order_id, current_user.id)
+
+
+@router.post("/payments/stripe/webhook", include_in_schema=False)
+async def stripe_webhook(
+    request: Request,
+    stripe_signature: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    await commerce_service.handle_stripe_event(db, await request.body(), stripe_signature)
+    return {"received": True}

@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { Receipt } from "lucide-react";
 import { BRAND, MyOrder } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
@@ -8,7 +9,7 @@ function paidWith(o: MyOrder) {
   const p = o.payments?.find((x) => x.status === "CAPTURED");
   if (!p) return o.grand_total === 0 ? "Free" : "—";
   if (p.card_last4) return `${BRAND[p.card_brand ?? ""] ?? "Card"} •••• ${p.card_last4}`;
-  return p.provider === "free" ? "Free" : "Test payment";
+  return p.provider === "free" ? "Free" : p.provider === "stripe" ? "Stripe" : "Test payment";
 }
 
 export default function Orders() {
@@ -31,7 +32,12 @@ export default function Orders() {
                 <td className={`${td} whitespace-nowrap text-slate-500`}>{date(o.created_at)}</td>
                 <td className={`${td} text-slate-600`}>{o.items.length} {o.items.length === 1 ? "course" : "courses"}</td>
                 <td className={`${td} whitespace-nowrap text-slate-600`}>{paidWith(o)}</td>
-                <td className={td}><StatusBadge status={o.status} /></td>
+                <td className={td}>
+                  <span className="flex items-center gap-3">
+                    <StatusBadge status={o.status} />
+                    {o.status === "PENDING" && o.grand_total > 0 && <Link href={`/checkout?order=${o.id}`} className="text-sm font-medium text-brand-700 hover:underline">Pay now</Link>}
+                  </span>
+                </td>
                 <td className={`${td} text-right font-semibold tabular-nums text-slate-900`}>{money(o.grand_total, o.currency_code)}</td>
               </tr>
             ))}

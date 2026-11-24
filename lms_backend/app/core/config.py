@@ -57,9 +57,15 @@ class Settings(BaseSettings):
     media_max_upload_mb: int = 1024
     media_url_expire_minutes: int = 360
 
-    # No real payment processor is connected yet. "mock" payments mark an order paid
-    # without charging anyone, so they must stay off anywhere real money is involved.
+    # "mock" payments mark an order paid without charging anyone, so they must stay off
+    # anywhere real money is involved.
     allow_mock_payments: bool = False
+
+    # Stripe. With a secret key set, paid orders go through Stripe Checkout and the simulated
+    # card form is switched off. The webhook secret (whsec_...) lets Stripe tell us about
+    # payments when the shopper never makes it back to the site.
+    stripe_secret_key: str | None = None
+    stripe_webhook_secret: str | None = None
 
 
 @lru_cache
